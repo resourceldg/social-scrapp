@@ -1,0 +1,7 @@
+selenium>=4.21.0
+beautifulsoup4>=4.12.3
+python-dotenv>=1.0.1
+pandas>=2.2.2
+webdriver-manager>=4.0.2
+streamlit>=1.36.0
+plotly>=5.22.0
