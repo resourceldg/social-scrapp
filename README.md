@@ -69,6 +69,12 @@ Variables principales:
 python main.py
 ```
 
+También puedes limitar plataformas desde CLI:
+
+```bash
+python main.py --platforms instagram,linkedin,twitter
+```
+
 Salidas:
 - `output/leads.csv`
 - `output/leads.json`
