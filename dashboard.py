@@ -3,16 +3,12 @@ from __future__ import annotations
 import io
 import json
 import subprocess
-import tempfile
-from pathlib import Path
-
+import pandas as pd
 import plotly.express as px
 import streamlit as st
 
 from config import load_config
 from utils.database import get_leads_df, get_runs_df, init_db
-
-PLATFORMS = ["instagram", "facebook", "linkedin", "pinterest", "reddit", "twitter"]
 
 st.set_page_config(page_title="Lead Dashboard", page_icon="📈", layout="wide")
 
@@ -22,27 +18,6 @@ init_db(config.sqlite_db_path)
 st.title("📈 Dashboard de Leads (SQLite)")
 st.caption("Visualización, acciones y control del pipeline de scraping.")
 
-st.subheader("Configuración de ejecución")
-selected_platforms = st.multiselect(
-    "Redes a scrapear",
-    options=PLATFORMS,
-    default=PLATFORMS,
-    help="Selecciona una o más redes para la próxima ejecución.",
-)
-
-credentials: dict[str, dict[str, str]] = {}
-with st.expander("🔐 Cargar usuario/contraseña por red (opcional)", expanded=False):
-    st.caption(
-        "Estos campos son opcionales y se pasan al pipeline como payload de configuración. "
-        "En esta versión el scraper sigue priorizando sesión manual ya iniciada."
-    )
-    for platform in selected_platforms:
-        st.markdown(f"**{platform.capitalize()}**")
-        c1, c2 = st.columns(2)
-        username = c1.text_input(f"Usuario {platform}", key=f"user_{platform}")
-        password = c2.text_input(f"Password {platform}", type="password", key=f"pass_{platform}")
-        credentials[platform] = {"username": username.strip(), "password": password.strip()}
-
 col1, col2, col3 = st.columns(3)
 
 with col1:
@@ -51,37 +26,13 @@ with col1:
 
 with col2:
     if st.button("🚀 Ejecutar scraping ahora", use_container_width=True):
-        if not selected_platforms:
-            st.warning("Selecciona al menos una red para ejecutar scraping.")
+        with st.spinner("Ejecutando main.py..."):
+            result = subprocess.run(["python", "main.py"], capture_output=True, text=True)
+        if result.returncode == 0:
+            st.success("Scraping finalizado correctamente.")
         else:
-            cred_file = None
-            try:
-                with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as tmp:
-                    json.dump(credentials, tmp, ensure_ascii=False)
-                    cred_file = Path(tmp.name)
-
-                cmd = [
-                    "python",
-                    "main.py",
-                    "--platforms",
-                    ",".join(selected_platforms),
-                    "--credentials-file",
-                    str(cred_file),
-                ]
-
-                with st.spinner("Ejecutando scraping... puede tardar varios minutos"):
-                    result = subprocess.run(cmd, capture_output=True, text=True)
-
-                if result.returncode == 0:
-                    st.success("Scraping finalizado correctamente.")
-                    if result.stdout:
-                        st.code(result.stdout)
-                else:
-                    st.error("El scraping terminó con errores.")
-                    st.code(result.stderr or result.stdout)
-            finally:
-                if cred_file and cred_file.exists():
-                    cred_file.unlink(missing_ok=True)
+            st.error("El scraping terminó con errores.")
+            st.code(result.stderr or result.stdout)
 
 with col3:
     st.info(f"Base SQLite: `{config.sqlite_db_path}`")
@@ -103,13 +54,13 @@ filter_col1, filter_col2, filter_col3 = st.columns(3)
 platforms = sorted([p for p in leads_df["source_platform"].dropna().unique().tolist() if p])
 lead_types = sorted([p for p in leads_df["lead_type"].dropna().unique().tolist() if p])
 
-selected_platform_filter = filter_col1.multiselect("Plataformas", platforms, default=platforms)
+selected_platforms = filter_col1.multiselect("Plataformas", platforms, default=platforms)
 selected_types = filter_col2.multiselect("Tipo de lead", lead_types, default=lead_types[: min(8, len(lead_types))])
 min_score = int(filter_col3.slider("Score mínimo", 0, 100, 40))
 
 filtered = leads_df.copy()
-if selected_platform_filter:
-    filtered = filtered[filtered["source_platform"].isin(selected_platform_filter)]
+if selected_platforms:
+    filtered = filtered[filtered["source_platform"].isin(selected_platforms)]
 if selected_types:
     filtered = filtered[filtered["lead_type"].isin(selected_types)]
 filtered = filtered[filtered["score"].fillna(0) >= min_score]

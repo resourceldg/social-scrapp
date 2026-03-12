@@ -87,13 +87,9 @@ Salidas:
 streamlit run dashboard.py
 ```
 
-> Nota: el formulario de credenciales del dashboard es opcional y actualmente se pasa como payload de configuración para trazabilidad; el flujo sigue usando sesión manual ya iniciada en navegador.
-
 ### Funciones del dashboard
-- Selector de **redes a scrapear** para la próxima corrida.
-- Formulario opcional de **usuario/password por red**.
 - Botón **Refrescar datos**.
-- Botón **Ejecutar scraping ahora** (lanza `python main.py --platforms ... --credentials-file ...`).
+- Botón **Ejecutar scraping ahora** (lanza `python main.py`).
 - Filtros por plataforma, tipo de lead y score mínimo.
 - KPIs de calidad (cantidad, score medio, con email, con website).
 - Gráficos:
