@@ -1,4 +1,4 @@
-# Social Scrapp - Lead Finder (Selenium + BeautifulSoup)
+# Social Scrapp - Lead Finder (Selenium + BeautifulSoup + SQLite + Dashboard)
 
 Proyecto en Python 3.11+ para detectar nuevos leads desde una sesión manual ya iniciada en:
 - Facebook
@@ -8,46 +8,35 @@ Proyecto en Python 3.11+ para detectar nuevos leads desde una sesión manual ya 
 - Reddit
 - Twitter/X
 
+Incluye:
+- Scraping conservador con Selenium + BeautifulSoup
+- Enriquecimiento (clasificación + señales + scoring)
+- Exportación CSV/JSON
+- Base de datos SQLite completa (leads + histórico de runs)
+- Dashboard interactivo con botones de acción y gráficos
+
 > **Importante**
 > - Este proyecto **no** evade captchas, 2FA, bloqueos ni rate limits.
 > - Solo extrae información visible públicamente o visible para tu cuenta autenticada.
-> - Usa navegación conservadora, delays aleatorios y límites por query/plataforma.
 
 ## Estructura
 
 ```text
 project/
   main.py
+  dashboard.py
   config.py
   requirements.txt
   .env.example
   README.md
   scrapers/
-    __init__.py
-    instagram_scraper.py
-    facebook_scraper.py
-    linkedin_scraper.py
-    pinterest_scraper.py
-    reddit_scraper.py
-    twitter_scraper.py
   parsers/
-    __init__.py
-    lead_parser.py
   models/
-    __init__.py
-    lead.py
   utils/
-    __init__.py
-    browser.py
-    helpers.py
-    classifiers.py
-    scoring.py
-    exporters.py
-    dedupe.py
-    logging_setup.py
   output/
     leads.csv
     leads.json
+    leads.db
   debug_html/
 ```
 
@@ -60,58 +49,67 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-## Configuración
+## Configuración (.env)
 
-Edita `.env`:
-- Configura `USER_DATA_DIR` y/o `CHROME_PROFILE_PATH` para reutilizar tu sesión de Chrome.
-- Ajusta límites:
-  - `MAX_PROFILES_PER_PLATFORM`
-  - `MAX_RESULTS_PER_QUERY`
-  - `MIN_DELAY`, `MAX_DELAY`
-- Ajusta keywords por plataforma.
+Variables principales:
+- `CHROME_PROFILE_PATH`
+- `USER_DATA_DIR`
+- `HEADLESS`
+- `MAX_PROFILES_PER_PLATFORM`
+- `MAX_RESULTS_PER_QUERY`
+- `MIN_DELAY`, `MAX_DELAY`
+- `OUTPUT_DIR`
+- `SAVE_DEBUG_HTML`
+- `SQLITE_DB_PATH` (ej. `output/leads.db`)
+- keywords por plataforma
 
-## Ejecución
-
-1. Verifica que tu perfil de Chrome tenga sesión iniciada en las plataformas objetivo.
-2. Ejecuta:
+## Ejecutar scraping
 
 ```bash
 python main.py
 ```
 
-3. Resultados:
+Salidas:
 - `output/leads.csv`
 - `output/leads.json`
-- HTML crudo para depuración en `debug_html/`
+- `output/leads.db`
+- `debug_html/*.html`
+
+## Ejecutar dashboard
+
+```bash
+streamlit run dashboard.py
+```
+
+### Funciones del dashboard
+- Botón **Refrescar datos**.
+- Botón **Ejecutar scraping ahora** (lanza `python main.py`).
+- Filtros por plataforma, tipo de lead y score mínimo.
+- KPIs de calidad (cantidad, score medio, con email, con website).
+- Gráficos:
+  - Leads por plataforma
+  - Distribución por tipo de lead
+  - Histograma de score
+  - Top países
+- Tabla interactiva de leads.
+- Botones para descargar CSV/JSON filtrado.
+- Tabla de histórico de ejecuciones (`scraping_runs`).
+
+## Base de datos SQLite
+
+Tablas:
+- `scraping_runs`: inicio/fin, estado, totales por ejecución.
+- `leads`: datos completos de lead + score + raw_data + timestamps.
+
+El guardado se hace con upsert y actualización de información más completa.
 
 ## Cómo adaptar selectores cuando cambia el DOM
 
 Cada scraper define constantes `*_SELECTORS` al inicio del archivo.
 
-Ejemplo:
-- `scrapers/instagram_scraper.py` -> `INSTAGRAM_SELECTORS`
-- `scrapers/linkedin_scraper.py` -> `LINKEDIN_SELECTORS`
-
 Flujo recomendado:
-1. Activa `SAVE_DEBUG_HTML=true`.
-2. Ejecuta el scraper.
-3. Abre el HTML guardado en `debug_html/`.
-4. Inspecciona nuevos atributos de nodos de resultados.
-5. Actualiza lista de selectores (mantén varios fallback selectors).
-6. Vuelve a correr y valida.
-
-## Pipeline de enriquecimiento
-
-- Extracción básica por plataforma.
-- Clasificación (`lead_type`) en `utils/classifiers.py`.
-- Señales de interés (`interest_signals`) en `utils/classifiers.py`.
-- Scoring 0-100 en `utils/scoring.py`.
-- Deduplicación/merge por `profile_url`, `social_handle`, `email` en `utils/dedupe.py`.
-- Exportación CSV/JSON con `utils/exporters.py`.
-
-## Consideraciones éticas y operativas
-
-- Respeta TOS de cada plataforma.
-- Reduce frecuencia si detectas throttling.
-- Mantén scraping conservador (el proyecto ya limita scroll y resultados).
-- Evita capturar datos sensibles no necesarios para prospección legítima.
+1. Activar `SAVE_DEBUG_HTML=true`.
+2. Ejecutar scraping.
+3. Inspeccionar HTML en `debug_html/`.
+4. Ajustar selectores en `scrapers/*_scraper.py`.
+5. Revalidar.

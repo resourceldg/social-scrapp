@@ -15,6 +15,7 @@ from scrapers import (
 )
 from utils.browser import build_driver
 from utils.classifiers import classify_lead, extract_interest_signals
+from utils.database import finish_run, init_db, start_run, upsert_leads
 from utils.dedupe import dedupe_leads
 from utils.exporters import export_leads
 from utils.logging_setup import setup_logging
@@ -49,6 +50,8 @@ def print_summary(leads: list[Lead]) -> None:
 def main() -> None:
     setup_logging()
     config = load_config()
+    init_db(config.sqlite_db_path)
+    run_id = start_run(config.sqlite_db_path, notes="Automated scrape from main.py")
 
     scrapers = [
         InstagramScraper(),
@@ -68,6 +71,9 @@ def main() -> None:
             leads = scraper.scrape(driver, config)
             logger.info("%s returned %s rows", scraper.platform, len(leads))
             all_leads.extend(leads)
+    except Exception:
+        finish_run(config.sqlite_db_path, run_id, "failed", len(all_leads), 0)
+        raise
     finally:
         driver.quit()
 
@@ -75,6 +81,8 @@ def main() -> None:
     deduped = dedupe_leads(enriched)
 
     export_leads(deduped, config.output_dir)
+    upsert_leads(config.sqlite_db_path, deduped, run_id=run_id)
+    finish_run(config.sqlite_db_path, run_id, "completed", len(all_leads), len(deduped))
     print_summary(deduped)
 
 

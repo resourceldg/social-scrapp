@@ -32,6 +32,7 @@ class AppConfig:
     output_dir: Path = Path("output")
     debug_html_dir: Path = Path("debug_html")
     save_debug_html: bool = True
+    sqlite_db_path: Path = Path("output/leads.db")
     instagram_keywords: List[str] = field(default_factory=list)
     facebook_keywords: List[str] = field(default_factory=list)
     linkedin_keywords: List[str] = field(default_factory=list)
@@ -64,6 +65,7 @@ def load_config() -> AppConfig:
         output_dir=Path(os.getenv("OUTPUT_DIR", "output")),
         debug_html_dir=Path("debug_html"),
         save_debug_html=_parse_bool(os.getenv("SAVE_DEBUG_HTML", "true"), default=True),
+        sqlite_db_path=Path(os.getenv("SQLITE_DB_PATH", "output/leads.db")),
         instagram_keywords=_parse_csv(os.getenv("INSTAGRAM_KEYWORDS", ""), DEFAULT_KEYWORDS["instagram"]),
         facebook_keywords=_parse_csv(os.getenv("FACEBOOK_KEYWORDS", ""), DEFAULT_KEYWORDS["facebook"]),
         linkedin_keywords=_parse_csv(os.getenv("LINKEDIN_KEYWORDS", ""), DEFAULT_KEYWORDS["linkedin"]),
@@ -74,4 +76,5 @@ def load_config() -> AppConfig:
 
     config.output_dir.mkdir(parents=True, exist_ok=True)
     config.debug_html_dir.mkdir(parents=True, exist_ok=True)
+    config.sqlite_db_path.parent.mkdir(parents=True, exist_ok=True)
     return config
