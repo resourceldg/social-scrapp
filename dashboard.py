@@ -1266,7 +1266,7 @@ def _rm_layout(height: int = 360) -> dict:
     _axis = dict(
         gridcolor="rgba(245,240,230,0.06)", linecolor="rgba(245,240,230,0.10)",
         tickfont=dict(color="rgba(245,240,230,0.60)", size=11),
-        titlefont=dict(color="rgba(245,240,230,0.65)", size=12),
+        title=dict(font=dict(color="rgba(245,240,230,0.65)", size=12)),
         zerolinecolor="rgba(245,240,230,0.08)",
     )
     return dict(
@@ -2485,9 +2485,8 @@ with tab_mapa:
                             projection_type="natural earth",
                         ),
                         coloraxis_colorbar=dict(
-                            title="Score",
+                            title=dict(text="Score", font=dict(color="rgba(245,240,230,0.65)", size=11)),
                             tickfont=dict(color="rgba(245,240,230,0.65)", size=10),
-                            titlefont=dict(color="rgba(245,240,230,0.65)", size=11),
                             bgcolor="rgba(0,0,0,0)",
                             bordercolor="rgba(245,240,230,0.10)",
                             len=0.6,
