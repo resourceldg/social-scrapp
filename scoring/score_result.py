@@ -57,6 +57,8 @@ class LeadScoreResult:
     buying_power_score: float = 0.0
     specifier_score: float = 0.0
     project_signal_score: float = 0.0
+    event_signal_score: float = 0.0        # EventSignalScore: event participation quality
+    network_influence_score: float = 0.0   # Graph-derived: centrality + PageRank (Phase 4)
     opportunity_score: int = 0
 
     # ── Classifications ────────────────────────────────────────────────────────

@@ -28,6 +28,7 @@ from __future__ import annotations
 import importlib
 import logging
 
+from event_pipeline import detect_events, score_event_signal
 from models import Lead
 from opportunity_engine.opportunity_classifier import classify_lead, classify_opportunity
 from opportunity_engine.opportunity_scorer import compute_opportunity_score
@@ -149,12 +150,18 @@ class ScoreEngine:
         specifier, sp_reasons = score_specifier(lead, signal_set)
         project_signal, proj_reasons = score_project_signal(lead, signal_set)
 
+        # ── Step 5b: event intelligence scoring ───────────────────────────────
+        event_detections = detect_events(lead)
+        event_signal, ev_reasons = score_event_signal(lead, event_detections)
+
         # ── Step 6: opportunity score + classification ─────────────────────────
         opportunity_score, opp_reasons = compute_opportunity_score(
             base_lead_score=float(final_score),
             buying_power_score=buying_power,
             specifier_score=specifier,
             project_signal_score=project_signal,
+            event_signal_score=event_signal,
+            network_influence_score=0.0,   # populated by network_engine in Phase 4
             mode=self.mode,
         )
         lead_classification = classify_lead(lead, signal_set)
@@ -181,7 +188,7 @@ class ScoreEngine:
             c_reasons + r_reasons + a_reasons
             + ci_reasons + pf_reasons + ps_reasons
             + bp_reasons + sp_reasons + proj_reasons
-            + opp_reasons
+            + ev_reasons + opp_reasons
         )
         confidence = compute_confidence(lead)
 
@@ -228,6 +235,8 @@ class ScoreEngine:
             buying_power_score=round(buying_power, 1),
             specifier_score=round(specifier, 1),
             project_signal_score=round(project_signal, 1),
+            event_signal_score=round(event_signal, 1),
+            network_influence_score=0.0,
             opportunity_score=opportunity_score,
             lead_classification=lead_classification,
             opportunity_classification=opportunity_classification,

@@ -114,6 +114,8 @@ def _re_enrich(lead: Lead) -> Lead:
         "buying_power_score": round(result.buying_power_score, 1),
         "specifier_score": round(result.specifier_score, 1),
         "project_signal_score": round(result.project_signal_score, 1),
+        "event_signal_score": round(result.event_signal_score, 1),
+        "network_influence_score": round(result.network_influence_score, 1),
         "opportunity_classification": result.opportunity_classification,
     }
     raw_data = {**(updated.raw_data or {}), **bi}

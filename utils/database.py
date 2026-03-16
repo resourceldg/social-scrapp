@@ -151,6 +151,118 @@ def init_db(db_path: Path) -> None:
         if "type_counts" not in existing_kw_cols:
             conn.execute("ALTER TABLE keyword_stats ADD COLUMN type_counts TEXT DEFAULT '{}'")
 
+        # ── New entity tables (Phase 2 — Project-First Intelligence) ───────────
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS accounts (
+                id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                name                    TEXT NOT NULL,
+                website                 TEXT DEFAULT '',
+                city                    TEXT DEFAULT '',
+                country                 TEXT DEFAULT '',
+                account_type            TEXT DEFAULT 'unknown',
+                buying_power_score      REAL DEFAULT 0.0,
+                specifier_score         REAL DEFAULT 0.0,
+                authority_rank          REAL DEFAULT 0.0,
+                network_influence_score REAL DEFAULT 0.0,
+                lead_count              INTEGER DEFAULT 0,
+                raw_data                TEXT DEFAULT '{}',
+                created_at              TEXT NOT NULL,
+                updated_at              TEXT NOT NULL,
+                UNIQUE(name, website)
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS projects (
+                id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+                name                     TEXT NOT NULL,
+                project_type             TEXT DEFAULT 'unknown',
+                status                   TEXT DEFAULT 'emerging',
+                location_city            TEXT DEFAULT '',
+                location_country         TEXT DEFAULT '',
+                lat                      REAL DEFAULT 0.0,
+                lon                      REAL DEFAULT 0.0,
+                inferred_start           TEXT DEFAULT '',
+                inferred_end             TEXT DEFAULT '',
+                budget_tier              TEXT DEFAULT 'unknown',
+                confidence               REAL DEFAULT 0.0,
+                source_lead_ids          TEXT DEFAULT '[]',
+                account_id               INTEGER,
+                opportunity_density      REAL DEFAULT 0.0,
+                ai_summary               TEXT DEFAULT '',
+                ai_recommended_approach  TEXT DEFAULT '',
+                ai_key_actors            TEXT DEFAULT '[]',
+                signal_sources           TEXT DEFAULT '[]',
+                raw_data                 TEXT DEFAULT '{}',
+                created_at               TEXT NOT NULL,
+                updated_at               TEXT NOT NULL,
+                FOREIGN KEY(account_id) REFERENCES accounts(id)
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS events (
+                id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                name                    TEXT NOT NULL,
+                event_type              TEXT DEFAULT 'unknown',
+                prestige_tier           TEXT DEFAULT 'unknown',
+                location_city           TEXT DEFAULT '',
+                location_country        TEXT DEFAULT '',
+                lat                     REAL DEFAULT 0.0,
+                lon                     REAL DEFAULT 0.0,
+                event_date              TEXT DEFAULT '',
+                event_year              INTEGER DEFAULT 0,
+                participant_lead_ids    TEXT DEFAULT '[]',
+                participant_count       INTEGER DEFAULT 0,
+                detected_from_lead_ids  TEXT DEFAULT '[]',
+                evidence_texts          TEXT DEFAULT '[]',
+                event_signal_score      REAL DEFAULT 0.0,
+                raw_data                TEXT DEFAULT '{}',
+                created_at              TEXT NOT NULL,
+                UNIQUE(name, event_year)
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS relationships (
+                id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id                INTEGER NOT NULL,
+                source_type              TEXT NOT NULL,
+                target_id                INTEGER NOT NULL,
+                target_type              TEXT NOT NULL,
+                relation_type            TEXT NOT NULL,
+                confidence               REAL DEFAULT 0.5,
+                source_platform          TEXT DEFAULT '',
+                evidence_text            TEXT DEFAULT '',
+                corroborating_platforms  TEXT DEFAULT '[]',
+                raw_data                 TEXT DEFAULT '{}',
+                detected_at              TEXT NOT NULL,
+                UNIQUE(source_id, source_type, target_id, target_type, relation_type)
+            )
+            """
+        )
+
+        # ── New lead columns for event + network intelligence ───────────────────
+        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(leads)")}
+        for _new_col, _defn in (
+            ("event_signal_score",      "REAL DEFAULT 0.0"),
+            ("network_influence_score", "REAL DEFAULT 0.0"),
+            ("actor_centrality_score",  "REAL DEFAULT 0.0"),
+            ("account_id",              "INTEGER"),
+            ("project_ids",             "TEXT DEFAULT '[]'"),
+            ("event_ids",               "TEXT DEFAULT '[]'"),
+        ):
+            if _new_col not in existing_cols:
+                conn.execute(f"ALTER TABLE leads ADD COLUMN {_new_col} {_defn}")
+
 
 def start_run(db_path: Path, notes: str = "") -> int:
     now = datetime.utcnow().isoformat()
@@ -452,6 +564,7 @@ def update_enriched_lead(db_path: Path, lead) -> None:
                 buying_power_score       = COALESCE(?, buying_power_score),
                 specifier_score          = COALESCE(?, specifier_score),
                 project_signal_score     = COALESCE(?, project_signal_score),
+                event_signal_score       = COALESCE(?, event_signal_score),
                 opportunity_classification = COALESCE(NULLIF(?, ''), opportunity_classification),
                 enriched_at = ?,
                 updated_at  = ?
@@ -470,6 +583,7 @@ def update_enriched_lead(db_path: Path, lead) -> None:
                 raw.get("buying_power_score"),
                 raw.get("specifier_score"),
                 raw.get("project_signal_score"),
+                raw.get("event_signal_score"),
                 raw.get("opportunity_classification", ""),
                 now, now,
                 lead.profile_url,

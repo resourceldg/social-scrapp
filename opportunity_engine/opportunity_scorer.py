@@ -21,48 +21,62 @@ from scoring.weights_config import RankingMode
 
 @dataclass(frozen=True)
 class OpportunityWeights:
-    """Weights applied to the four opportunity components. Must sum to 1.0."""
+    """Weights applied to the six opportunity components. Must sum to 1.0."""
 
     base_lead: float
     buying_power: float
     specifier: float
     project_signal: float
+    event_signal: float = 0.0
+    network_influence: float = 0.0
 
     def __post_init__(self) -> None:
-        total = self.base_lead + self.buying_power + self.specifier + self.project_signal
+        total = (
+            self.base_lead + self.buying_power + self.specifier
+            + self.project_signal + self.event_signal + self.network_influence
+        )
         if abs(total - 1.0) > 0.01:
             raise ValueError(f"OpportunityWeights must sum to 1.0, got {total:.4f}")
 
 
 # Weight table — keyed by RankingMode so the engine uses a single mode enum
+# event_signal and network_influence are new dimensions; existing weights
+# are proportionally reduced to accommodate them while preserving relative ratios.
 OPPORTUNITY_WEIGHTS: dict[RankingMode, OpportunityWeights] = {
-    # Cold outreach: balanced across all four components
+    # Cold outreach: balanced — events and network add meaningful signal
     RankingMode.OUTREACH_PRIORITY: OpportunityWeights(
-        base_lead=0.40, buying_power=0.20, specifier=0.20, project_signal=0.20,
+        base_lead=0.35, buying_power=0.15, specifier=0.15,
+        project_signal=0.15, event_signal=0.10, network_influence=0.10,
     ),
-    # Influencer / brand collab: lead quality dominates
+    # Influencer / brand collab: lead quality + network reach dominate
     RankingMode.AUTHORITY_FIRST: OpportunityWeights(
-        base_lead=0.50, buying_power=0.20, specifier=0.15, project_signal=0.15,
+        base_lead=0.40, buying_power=0.15, specifier=0.10,
+        project_signal=0.10, event_signal=0.10, network_influence=0.15,
     ),
-    # High-end buyer qualification: economic capacity matters most
+    # High-end buyer: economic capacity + event circuit presence
     RankingMode.PREMIUM_FIT_FIRST: OpportunityWeights(
-        base_lead=0.35, buying_power=0.35, specifier=0.15, project_signal=0.15,
+        base_lead=0.30, buying_power=0.30, specifier=0.12,
+        project_signal=0.12, event_signal=0.10, network_influence=0.06,
     ),
-    # Contactability: same base weights as outreach (specifier still valued)
+    # Contactability: reachability first; events/network secondary
     RankingMode.CONTACTABILITY_FIRST: OpportunityWeights(
-        base_lead=0.40, buying_power=0.20, specifier=0.20, project_signal=0.20,
+        base_lead=0.38, buying_power=0.18, specifier=0.18,
+        project_signal=0.15, event_signal=0.06, network_influence=0.05,
     ),
-    # Brand awareness: relevance-first, specifier value secondary
+    # Brand awareness: relevance + event visibility + network
     RankingMode.BRAND_RELEVANCE: OpportunityWeights(
-        base_lead=0.40, buying_power=0.15, specifier=0.25, project_signal=0.20,
+        base_lead=0.33, buying_power=0.12, specifier=0.20,
+        project_signal=0.15, event_signal=0.12, network_influence=0.08,
     ),
-    # Architect / designer network: specifier dominates
+    # Architect / designer network: specifier + event circuit dominate
     RankingMode.SPECIFIER_NETWORK: OpportunityWeights(
-        base_lead=0.25, buying_power=0.15, specifier=0.45, project_signal=0.15,
+        base_lead=0.22, buying_power=0.12, specifier=0.38,
+        project_signal=0.12, event_signal=0.10, network_influence=0.06,
     ),
-    # Hot leads: imminent project wins are everything
+    # Hot leads: project signal dominates; events confirm urgency
     RankingMode.HOT_PROJECT_DETECTION: OpportunityWeights(
-        base_lead=0.25, buying_power=0.15, specifier=0.15, project_signal=0.45,
+        base_lead=0.22, buying_power=0.12, specifier=0.12,
+        project_signal=0.38, event_signal=0.10, network_influence=0.06,
     ),
 }
 
@@ -73,6 +87,8 @@ def compute_opportunity_score(
     specifier_score: float,
     project_signal_score: float,
     mode: RankingMode = RankingMode.OUTREACH_PRIORITY,
+    event_signal_score: float = 0.0,
+    network_influence_score: float = 0.0,
 ) -> tuple[int, list[str]]:
     """
     Compute the final opportunity score (0–100) and explanatory reasons.
@@ -89,6 +105,10 @@ def compute_opportunity_score(
         From score_project_signal() (0–100).
     mode : RankingMode
         Determines weight distribution. Defaults to OUTREACH_PRIORITY.
+    event_signal_score : float
+        From event_pipeline.score_event_signal() (0–100). Default 0.
+    network_influence_score : float
+        From network_engine.graph_metrics (0–100). Default 0 until Phase 4.
 
     Returns
     -------
@@ -98,10 +118,12 @@ def compute_opportunity_score(
     w = OPPORTUNITY_WEIGHTS[mode]
 
     weighted = (
-        base_lead_score * w.base_lead
+        base_lead_score      * w.base_lead
         + buying_power_score * w.buying_power
-        + specifier_score * w.specifier
+        + specifier_score    * w.specifier
         + project_signal_score * w.project_signal
+        + event_signal_score * w.event_signal
+        + network_influence_score * w.network_influence
     )
     final = min(100, max(0, round(weighted)))
 
@@ -114,5 +136,9 @@ def compute_opportunity_score(
         reasons.append(f"high specifier potential ({round(specifier_score)})")
     if project_signal_score >= 50:
         reasons.append(f"active project signals ({round(project_signal_score)})")
+    if event_signal_score >= 40:
+        reasons.append(f"strong event circuit presence ({round(event_signal_score)})")
+    if network_influence_score >= 40:
+        reasons.append(f"network hub — high centrality ({round(network_influence_score)})")
 
     return final, reasons
