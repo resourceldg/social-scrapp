@@ -2525,12 +2525,12 @@ with tab_mapa:
                         ))
                         _bar_fig.update_layout(
                             **_rm_layout(height=320),
-                            yaxis=dict(
-                                autorange="reversed",
-                                gridcolor="rgba(245,240,230,0.06)",
-                                tickfont=dict(color="rgba(245,240,230,0.65)", size=11),
-                            ),
                             xaxis_range=[0, max(_bar_df["avg_score"].max() * 1.2, 10)],
+                        )
+                        _bar_fig.update_yaxes(
+                            autorange="reversed",
+                            gridcolor="rgba(245,240,230,0.06)",
+                            tickfont=dict(color="rgba(245,240,230,0.65)", size=11),
                         )
                         st.plotly_chart(_bar_fig, use_container_width=True)
                 else:
@@ -2651,9 +2651,12 @@ with tab_red:
                     ))
                     _rel_fig.update_layout(
                         **_rm_layout(height=260),
-                        yaxis=dict(autorange="reversed", gridcolor="rgba(245,240,230,0.04)",
-                                   tickfont=dict(color="rgba(245,240,230,0.65)", size=11)),
                         xaxis_range=[0, max(_rv) * 1.3 if _rv else 10],
+                    )
+                    _rel_fig.update_yaxes(
+                        autorange="reversed",
+                        gridcolor="rgba(245,240,230,0.04)",
+                        tickfont=dict(color="rgba(245,240,230,0.65)", size=11),
                     )
                     st.plotly_chart(_rel_fig, use_container_width=True)
 
