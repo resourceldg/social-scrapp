@@ -82,13 +82,31 @@ class LinkedInScraper:
             save_debug_html(driver, config.debug_html_dir, f"linkedin_authwall_{quote(keyword)}.html", True)
             return []
 
-        # Wait for React to render result cards (up to 12s)
-        try:
-            WebDriverWait(driver, 12).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/in/'], a[href*='/company/']"))
-            )
-        except Exception:
-            logger.debug("LinkedIn: no profile links appeared for '%s' within timeout — page may be empty or blocked", keyword)
+        # Wait for React to render result cards (LinkedIn SPA — up to 20s)
+        # Try result containers first, fall back to profile link anchors
+        _LI_RESULT_SELECTORS = (
+            "li.reusable-search__result-container",
+            ".entity-result",
+            ".search-results-container",
+            "a[href*='/in/']",
+            "a[href*='/company/']",
+        )
+        _found = False
+        import time as _t
+        _deadline = _t.time() + 20
+        while _t.time() < _deadline:
+            for _sel in _LI_RESULT_SELECTORS:
+                try:
+                    if driver.find_elements(By.CSS_SELECTOR, _sel):
+                        _found = True
+                        break
+                except Exception:
+                    pass
+            if _found:
+                break
+            _t.sleep(0.7)
+        if not _found:
+            logger.debug("LinkedIn: no result elements appeared for '%s' within 20s — page may be empty or blocked", keyword)
 
         scroll_page(driver, scrolls=config.scrolls_override, min_delay=config.min_delay, max_delay=config.max_delay)
         save_debug_html(driver, config.debug_html_dir, f"linkedin_{quote(keyword)}.html", config.save_debug_html)

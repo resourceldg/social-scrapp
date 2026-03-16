@@ -387,6 +387,16 @@ class BehanceScraper:
             )
             return []
 
+        # Warm up the Behance SPA from the homepage so the React session state
+        # initialises before we navigate directly to search URLs.
+        try:
+            driver.get("https://www.behance.net/")
+            WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            time.sleep(2)
+            logger.debug("Behance: homepage warm-up done.")
+        except Exception:
+            pass
+
         for keyword in config.behance_keywords:
             if len(leads) >= config.max_profiles_per_platform:
                 break
@@ -430,6 +440,36 @@ class BehanceScraper:
 
         return leads
 
+    # ── User / profile cards selector (Behance React SPA) ────────────────────
+    # These selectors match elements that only appear when search results load.
+    _USER_RESULT_SELECTORS = (
+        "a[href^='/'][href*='/'][class*='UserCard']",
+        "div[class*='UserCard'] a[href^='/']",
+        "div[class*='user-card'] a[href^='/']",
+        "ul[class*='search-results'] a[href^='/']",
+        "section[class*='Search'] a[href^='/']",
+    )
+    _PROJECT_RESULT_SELECTORS = (
+        "a[href^='/'][class*='ProjectCard']",
+        "div[class*='ProjectCard'] a[href^='/']",
+        "div[class*='project-card'] a[href^='/']",
+        "ul[class*='ProjectsList'] a[href^='/']",
+    )
+
+    def _wait_for_spa_content(self, driver: WebDriver, selectors: tuple, timeout: int = 18) -> bool:
+        """Wait up to `timeout` seconds for any of the SPA result selectors to appear."""
+        import time as _time
+        deadline = _time.time() + timeout
+        while _time.time() < deadline:
+            for sel in selectors:
+                try:
+                    if driver.find_elements(By.CSS_SELECTOR, sel):
+                        return True
+                except Exception:
+                    pass
+            _time.sleep(0.6)
+        return False
+
     def _search_users(
         self,
         driver: WebDriver,
@@ -443,7 +483,19 @@ class BehanceScraper:
         WebDriverWait(driver, config.page_load_timeout).until(
             EC.presence_of_element_located((By.TAG_NAME, "body"))
         )
-        time.sleep(2)
+
+        # Log where we actually landed (detect silent redirects)
+        cur = driver.current_url
+        if "behance.net" not in cur or any(x in cur for x in ("/login", "/signin", "accounts.adobe.com")):
+            logger.warning("Behance: redirected away from search to %s for '%s'", cur, keyword)
+            save_debug_html(driver, config.debug_html_dir, f"behance_redirect_{quote(keyword)}.html", True)
+            return []
+
+        # Wait for React SPA to render user cards
+        found = self._wait_for_spa_content(driver, self._USER_RESULT_SELECTORS, timeout=18)
+        if not found:
+            logger.debug("Behance: SPA user cards not detected for '%s' within timeout — parsing anyway", keyword)
+
         scroll_page(driver, scrolls=config.scrolls_override, min_delay=config.min_delay, max_delay=config.max_delay)
         save_debug_html(driver, config.debug_html_dir, f"behance_users_{quote(keyword)}.html", config.save_debug_html)
 
@@ -462,7 +514,16 @@ class BehanceScraper:
         WebDriverWait(driver, config.page_load_timeout).until(
             EC.presence_of_element_located((By.TAG_NAME, "body"))
         )
-        time.sleep(2)
+
+        cur = driver.current_url
+        if "behance.net" not in cur or any(x in cur for x in ("/login", "/signin", "accounts.adobe.com")):
+            logger.warning("Behance: redirected away from project search to %s for '%s'", cur, keyword)
+            return []
+
+        found = self._wait_for_spa_content(driver, self._PROJECT_RESULT_SELECTORS, timeout=18)
+        if not found:
+            logger.debug("Behance: SPA project cards not detected for '%s' within timeout — parsing anyway", keyword)
+
         scroll_page(driver, scrolls=config.scrolls_override, min_delay=config.min_delay, max_delay=config.max_delay)
         save_debug_html(driver, config.debug_html_dir, f"behance_proj_{quote(keyword)}.html", config.save_debug_html)
 
