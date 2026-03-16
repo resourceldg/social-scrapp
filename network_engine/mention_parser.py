@@ -33,6 +33,26 @@ from models import Lead
 # Direct @handle extraction
 _AT_HANDLE_RE = re.compile(r"@([\w.]+)", re.UNICODE)
 
+# Email/domain blocklist — these are not social handles
+_EMAIL_DOMAINS: frozenset = frozenset({
+    "gmail.com", "hotmail.com", "yahoo.com", "outlook.com", "icloud.com",
+    "live.com", "me.com", "mac.com", "protonmail.com", "aol.com",
+    "msn.com", "googlemail.com", "ymail.com", "inbox.com",
+})
+# Handles that are clearly not social accounts (contain a dot + known TLD)
+_TLD_RE = re.compile(r"\.(com|net|org|io|co|ly|me|tv|co\.uk|es|fr|de|it)$", re.IGNORECASE)
+
+
+def _is_invalid_handle(handle: str) -> bool:
+    """Return True if the handle looks like an email domain or URL fragment."""
+    if handle in _EMAIL_DOMAINS:
+        return True
+    if _TLD_RE.search(handle):
+        return True
+    if len(handle) < 2 or len(handle) > 40:
+        return True
+    return False
+
 # Collaboration signal — strong evidence of COLLABORATES_WITH
 _COLLAB_PATTERNS = re.compile(
     r"\b(in collaboration with|collaboration with|collab with|partnering with"
@@ -132,6 +152,8 @@ def parse_mentions(lead: Lead) -> list[MentionResult]:
                 handle_clean = handle.lower().strip("._")
                 if not handle_clean or handle_clean == source_handle.lower():
                     continue
+                if _is_invalid_handle(handle_clean):
+                    continue
                 key = (handle_clean, rel_type)
                 if key in seen:
                     continue
@@ -149,6 +171,8 @@ def parse_mentions(lead: Lead) -> list[MentionResult]:
     for m in _AT_HANDLE_RE.finditer(full_text):
         handle_clean = m.group(1).lower().strip("._")
         if not handle_clean or handle_clean == source_handle.lower():
+            continue
+        if _is_invalid_handle(handle_clean):
             continue
         # Skip if already captured with a stronger relation type
         if any(handle_clean == r.target_handle for r in results):

@@ -184,15 +184,19 @@ def render_network_html(
     try:
         import networkx as nx
 
-        # Limit nodes for browser performance
-        if G.number_of_nodes() > max_nodes:
-            top_nodes = sorted(
+        # ── Node selection: always include connected nodes, fill with top-scored ──
+        import networkx as _nx_local
+        _connected_ids = {n for n in G.nodes() if G.degree(n) > 0}
+        _isolated_ids = [
+            n for n, d in sorted(
                 G.nodes(data=True),
                 key=lambda x: x[1].get("opportunity_score", 0) + x[1].get("score", 0),
                 reverse=True,
-            )[:max_nodes]
-            sub_node_ids = {n for n, _ in top_nodes}
-            G = G.subgraph(sub_node_ids)
+            ) if n not in _connected_ids
+        ]
+        _slots = max(0, max_nodes - len(_connected_ids))
+        _show_ids = _connected_ids | set(_isolated_ids[:_slots])
+        G = G.subgraph(_show_ids)
 
         net = _PyvisNetwork(
             height=f"{height}px",
@@ -226,20 +230,28 @@ def render_network_html(
         }
         """)
 
-        # Add nodes
+        # Add nodes — connected nodes get gold border + larger size
+        _connected_set = {n for n in G.nodes() if G.degree(n) > 0}
         for node_id, attrs in G.nodes(data=True):
             _name = str(attrs.get("label", node_id))[:20]
             _city = attrs.get("city", "")
             _label = f"{_name}\n{_city[:12]}" if _city else _name
+            _is_conn = node_id in _connected_set
+            _base_color = _node_color(attrs)
+            _color = {
+                "background": _base_color,
+                "border": "#C4A35A" if _is_conn else "#444",
+                "highlight": {"background": _base_color, "border": "#F5F0E6"},
+            }
             net.add_node(
                 node_id,
                 label=_label,
-                color=_node_color(attrs),
-                size=_node_size(attrs),
+                color=_color,
+                size=(_node_size(attrs) + 10) if _is_conn else _node_size(attrs),
                 title=_node_title(node_id, attrs),
-                font={"size": 11, "color": "#CDD6F4"},
-                borderWidth=2,
-                borderWidthSelected=4,
+                font={"size": 12 if _is_conn else 10, "color": "#F5F0E6" if _is_conn else "#9A9A9A"},
+                borderWidth=3 if _is_conn else 1,
+                borderWidthSelected=5,
             )
 
         # Add edges
@@ -258,11 +270,12 @@ def render_network_html(
             )
             net.add_edge(
                 src, dst,
-                color={"color": style["color"], "opacity": min(1.0, conf + 0.2)},
-                width=style["width"],
+                color={"color": style["color"], "opacity": 0.9, "highlight": "#F5F0E6"},
+                width=max(style["width"], 3),
                 dashes=style["dashes"],
                 title=tooltip,
-                arrows={"to": {"enabled": True, "scaleFactor": 0.6}},
+                arrows={"to": {"enabled": True, "scaleFactor": 0.8}},
+                smooth={"type": "curvedCW", "roundness": 0.2},
             )
 
         with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w") as f:
