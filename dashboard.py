@@ -2492,8 +2492,8 @@ with tab_mapa:
                             bordercolor="rgba(245,240,230,0.10)",
                             len=0.6,
                         ),
-                        margin=dict(l=0, r=0, t=20, b=0),
                     )
+                    _map_fig.update_layout(margin=dict(l=0, r=0, t=20, b=0))
                     _map_fig.update_traces(marker=dict(line=dict(width=0.5, color="rgba(196,163,90,0.4)")))
                     st.plotly_chart(_map_fig, use_container_width=True)
 
