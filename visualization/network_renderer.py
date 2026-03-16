@@ -97,24 +97,55 @@ def _node_color(attrs: dict) -> str:
 
 
 def _node_title(node_id: str, attrs: dict) -> str:
-    """Plain-text tooltip for a node (vis-network 9.x sanitizes HTML)."""
+    """HTML tooltip — sanitization is disabled via JS injection in render_network_html."""
     label = attrs.get("label", node_id)
     ntype = attrs.get("type", "lead")
-    parts = [label, f"Type: {ntype}"]
+    city = attrs.get("city", "")
+    country = attrs.get("country", "")
+    loc = ", ".join(p for p in [city, country] if p)
+
+    lines = [f"<b style='font-size:13px'>{label}</b>"]
+    if loc:
+        lines.append(f"<span style='color:#C4A35A'>📍 {loc}</span>")
+
     if ntype == "lead":
-        parts.append(f"Platform: {attrs.get('platform','')}")
-        parts.append(f"Lead type: {attrs.get('lead_type','')}")
-        parts.append(f"Score: {attrs.get('score', 0)}")
+        platform = attrs.get("platform", "")
+        lead_type = attrs.get("lead_type", "") or "—"
+        score = attrs.get("score", 0)
         opp = attrs.get("opportunity_score", 0)
-        if opp:
-            parts.append(f"Opp. score: {opp}")
         opp_c = attrs.get("opportunity_classification", "")
+        proj_sig = attrs.get("project_signal_score", 0.0) or 0
+        evt_sig = attrs.get("event_signal_score", 0.0) or 0
+        followers = attrs.get("followers", "")
+        bio = attrs.get("bio", "")
+        profile_url = attrs.get("profile_url", "")
+
+        lines.append(f"<span style='color:#aaa'>{platform} · {lead_type}</span>")
+        lines.append(f"Score <b>{score}</b>" + (f" · Opp <b>{opp}</b>" if opp else ""))
         if opp_c:
-            parts.append(f"Class: {opp_c}")
-        city = attrs.get("city", "")
-        if city:
-            parts.append(f"City: {city}")
-    return "\n".join(parts)
+            lines.append(f"<span style='color:#C4A35A'>{opp_c.replace('_',' ')}</span>")
+        if followers:
+            lines.append(f"Followers: {followers}")
+        _signals = []
+        if proj_sig > 0:
+            _signals.append(f"Project {proj_sig:.0f}")
+        if evt_sig > 0:
+            _signals.append(f"Event {evt_sig:.0f}")
+        if _signals:
+            lines.append("Signals: " + " · ".join(_signals))
+        if bio:
+            lines.append(f"<i style='color:#ccc;font-size:11px'>{bio[:100]}…</i>")
+        if profile_url:
+            lines.append(
+                f'<a href="{profile_url}" target="_blank" '
+                f'style="color:#C4A35A;text-decoration:underline">Open profile ↗</a>'
+            )
+    elif ntype == "project":
+        lines.append("<span style='color:#00B894'>Project node</span>")
+    elif ntype == "event":
+        lines.append("<span style='color:#FDCB6E'>Event node</span>")
+
+    return "<br>".join(lines)
 
 
 def render_network_html(
@@ -197,9 +228,12 @@ def render_network_html(
 
         # Add nodes
         for node_id, attrs in G.nodes(data=True):
+            _name = str(attrs.get("label", node_id))[:20]
+            _city = attrs.get("city", "")
+            _label = f"{_name}\n{_city[:12]}" if _city else _name
             net.add_node(
                 node_id,
-                label=str(attrs.get("label", node_id))[:22],
+                label=_label,
                 color=_node_color(attrs),
                 size=_node_size(attrs),
                 title=_node_title(node_id, attrs),
@@ -215,10 +249,12 @@ def render_network_html(
                 continue
             rel = edata.get("relation_type", "MENTIONED_WITH")
             style = _EDGE_STYLES.get(rel, _DEFAULT_EDGE_STYLE)
+            evidence = edata.get("evidence", "")
             tooltip = (
-                f"{rel}\n"
-                f"confidence: {conf:.2f}\n"
-                f"platform: {edata.get('platform','')}"
+                f"<b>{rel.replace('_', ' ')}</b><br>"
+                f"confidence: {conf:.2f}<br>"
+                f"platform: {edata.get('platform', '')}"
+                + (f"<br><i style='color:#ccc;font-size:11px'>{evidence[:80]}…</i>" if evidence else "")
             )
             net.add_edge(
                 src, dst,
@@ -235,6 +271,33 @@ def render_network_html(
         net.save_graph(tmp_path)
         html = Path(tmp_path).read_text(encoding="utf-8")
         Path(tmp_path).unlink(missing_ok=True)
+
+        # ── Post-process: dark RM theme + allow HTML in vis-network tooltips ──
+        _style_inject = """
+<style>
+  body { background:#0F0E0C !important; margin:0; padding:0; }
+  div.vis-tooltip {
+    background:#141210 !important; color:#F5F0E6 !important;
+    border:1px solid rgba(196,163,90,0.35) !important;
+    border-radius:4px !important; padding:8px 10px !important;
+    font-family:Inter,sans-serif !important; font-size:12px !important;
+    max-width:280px; line-height:1.5;
+  }
+  div.vis-tooltip a { color:#C4A35A !important; }
+</style>"""
+        _js_inject = """
+<script>
+(function patchVis() {
+  // Disable vis-network HTML sanitization so tooltips render as HTML
+  if (window.vis && window.vis.util && typeof window.vis.util.sanitizeHTML === 'function') {
+    window.vis.util.sanitizeHTML = function(s) { return s; };
+  } else {
+    setTimeout(patchVis, 80);
+  }
+})();
+</script>"""
+        html = html.replace("</head>", _style_inject + "\n</head>", 1)
+        html = html.replace("</body>", _js_inject + "\n</body>", 1)
         return html
 
     except Exception as exc:

@@ -138,6 +138,7 @@ def build_graph(
         node_id = _lead_node_id(handle, lead.source_platform)
         handle_to_node_id[handle] = node_id
 
+        raw = lead.raw_data if isinstance(lead.raw_data, dict) else {}
         G.add_node(
             node_id,
             type="lead",
@@ -149,27 +150,18 @@ def build_graph(
             city=lead.city or "",
             country=lead.country or "",
             score=lead.score,
+            followers=str(lead.followers or ""),
+            bio=(lead.bio or "")[:140],
+            profile_url=raw.get("profile_url", ""),
             db_id=db_ids.get(handle, 0),
-            # BI scores (populated after scoring)
-            specifier_score=0.0,
-            buying_power_score=0.0,
-            event_signal_score=0.0,
-            opportunity_score=0,
-            opportunity_classification="",
+            # BI scores (populated after scoring, overwritten below)
+            specifier_score=raw.get("specifier_score", 0.0),
+            buying_power_score=raw.get("buying_power_score", 0.0),
+            project_signal_score=raw.get("project_signal_score", 0.0),
+            event_signal_score=raw.get("event_signal_score", 0.0),
+            opportunity_score=raw.get("opportunity_score", 0),
+            opportunity_classification=raw.get("opportunity_classification", ""),
         )
-
-    # ── Populate BI scores from raw_data ───────────────────────────────────────
-    for lead in leads:
-        handle = (lead.social_handle or lead.name or "").lower()
-        node_id = handle_to_node_id.get(handle)
-        if not node_id or node_id not in G.nodes:
-            continue
-        raw = lead.raw_data if isinstance(lead.raw_data, dict) else {}
-        G.nodes[node_id]["specifier_score"] = raw.get("specifier_score", 0.0)
-        G.nodes[node_id]["buying_power_score"] = raw.get("buying_power_score", 0.0)
-        G.nodes[node_id]["event_signal_score"] = raw.get("event_signal_score", 0.0)
-        G.nodes[node_id]["opportunity_score"] = raw.get("opportunity_score", 0)
-        G.nodes[node_id]["opportunity_classification"] = raw.get("opportunity_classification", "")
 
     # ── Add relationship edges from mention_results ────────────────────────────
     if mention_results:

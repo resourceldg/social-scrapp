@@ -2598,6 +2598,14 @@ with tab_red:
             _rn3.metric("Menciones encontradas", len(_mentions))
             _rn4.metric("Tasa mención/lead", f"{_mention_rate:.1f}%")
 
+            if _graph.edge_count == 0:
+                st.info(
+                    "Todos los leads están en el grafo como nodos individuales. "
+                    "Las aristas (conexiones) se crean cuando las bios contienen @menciones de otros leads. "
+                    "Con 0 menciones la red aparece como puntos aislados — es correcto. "
+                    "Para activar conexiones: enriquece leads con bios reales que mencionen colaboradores."
+                )
+
             st.markdown('<div style="height:.75rem"></div>', unsafe_allow_html=True)
 
             # ── Primary view: actor table + relation type chart ────────────────
