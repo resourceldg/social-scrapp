@@ -71,6 +71,25 @@ class LinkedInScraper:
         WebDriverWait(driver, config.page_load_timeout).until(
             EC.presence_of_element_located((By.TAG_NAME, "body"))
         )
+
+        # Check redirect URL — LinkedIn sends unauthenticated users to /authwall
+        current_url = driver.current_url
+        if any(sig in current_url for sig in ("/authwall", "/login", "/uas/login", "/checkpoint")):
+            logger.warning(
+                "LinkedIn: redirected to auth page (%s) for keyword '%s' — session expired or not logged in",
+                current_url, keyword,
+            )
+            save_debug_html(driver, config.debug_html_dir, f"linkedin_authwall_{quote(keyword)}.html", True)
+            return []
+
+        # Wait for React to render result cards (up to 12s)
+        try:
+            WebDriverWait(driver, 12).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/in/'], a[href*='/company/']"))
+            )
+        except Exception:
+            logger.debug("LinkedIn: no profile links appeared for '%s' within timeout — page may be empty or blocked", keyword)
+
         scroll_page(driver, scrolls=config.scrolls_override, min_delay=config.min_delay, max_delay=config.max_delay)
         save_debug_html(driver, config.debug_html_dir, f"linkedin_{quote(keyword)}.html", config.save_debug_html)
 
@@ -88,7 +107,14 @@ class LinkedInScraper:
         new_leads: list[Lead] = []
         remaining = config.max_profiles_per_platform - len(existing)
 
-        for a in soup.select("a[href*='/in/'], a[href*='/company/']"):
+        links = soup.select("a[href*='/in/'], a[href*='/company/']")
+        if not links:
+            logger.warning(
+                "LinkedIn: 0 profile links found for '%s' (url=%s) — session may be expired or DOM changed",
+                keyword, current_url,
+            )
+
+        for a in links:
             href = a.get("href", "")
             if "/in/" not in href and "/company/" not in href:
                 continue

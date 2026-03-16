@@ -84,6 +84,7 @@ def _re_enrich(lead: Lead) -> Lead:
     updated = dataclasses.replace(lead, lead_type=lead_type, interest_signals=signals)
 
     # ── Step 1: rule-based lead_type from bio (fast, always runs) ────────────
+    global _ollama_checked
     with _ollama_lock:
         if _ollama_checked is None:
             _ollama_checked = is_ollama_available()
