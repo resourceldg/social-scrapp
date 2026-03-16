@@ -445,7 +445,10 @@ class TestOpportunityScore:
         assert len(reasons) >= 2
 
     def test_bounded_at_100(self):
-        score, _ = compute_opportunity_score(100, 100, 100, 100)
+        # All six components at 100 must produce exactly 100 (bounded)
+        score, _ = compute_opportunity_score(100, 100, 100, 100,
+                                             event_signal_score=100,
+                                             network_influence_score=100)
         assert score == 100
 
 
