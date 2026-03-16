@@ -41,8 +41,9 @@ init_db(config.sqlite_db_path)
 st.title("🎯 Lead Intelligence")
 st.caption("Arte contemporáneo · Collectible design · Interiorismo · Arquitectura · Hospitalidad")
 
-tab_opp, tab_analisis, tab_feedback, tab_sistema, tab_prog, tab_config, tab_docs = st.tabs([
-    "🎯 Oportunidades", "📊 Análisis", "🔄 Feedback", "📡 Sistema", "⏰ Programación", "⚙️ Configuración", "📖 Documentación"
+tab_opp, tab_analisis, tab_mapa, tab_red, tab_discovery, tab_feedback, tab_sistema, tab_prog, tab_config, tab_docs = st.tabs([
+    "🎯 Oportunidades", "📊 Análisis", "🗺️ Mapa", "🕸️ Red", "🔍 Discovery",
+    "🔄 Feedback", "📡 Sistema", "⏰ Programación", "⚙️ Configuración", "📖 Documentación"
 ])
 
 # ── Cron / process utilities (used by tab_prog) ────────────────────────────────
@@ -1761,6 +1762,290 @@ with tab_analisis:
                 "(bot-detection, cambio de algoritmo) o si mejora con los nuevos keywords."
             )
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB: 🗺️ Mapa — World map: project clusters + lead heatmap
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_mapa:
+    st.subheader("🗺️ Mapa de Proyectos y Oportunidades")
+
+    try:
+        from visualization.world_map import render_world_map_html
+        import components.v1 as _cv1_mapa
+
+        _mapa_df = get_leads_df(config.sqlite_db_path)
+
+        st.caption(
+            "Clusters de proyectos inferidos · Heatmap de densidad de leads por ciudad. "
+            "Los círculos naranjas = proyectos activos · morados = emergentes."
+        )
+
+        # No geocoded clusters yet (Phase 3 runs offline) — show lead heatmap only
+        _map_html = render_world_map_html(
+            clusters=None,
+            events=None,
+            leads_df=_mapa_df if not _mapa_df.empty else None,
+            height=500,
+        )
+        st.components.v1.html(_map_html, height=510, scrolling=False)
+
+        # ── Stats below map ───────────────────────────────────────────────────
+        if not _mapa_df.empty and "city" in _mapa_df.columns:
+            _city_counts = (
+                _mapa_df[_mapa_df["city"].notna() & (_mapa_df["city"] != "")]
+                .groupby("city")
+                .agg(leads=("score", "count"), avg_score=("score", "mean"))
+                .round(1)
+                .sort_values("avg_score", ascending=False)
+                .head(15)
+                .reset_index()
+            )
+            if not _city_counts.empty:
+                st.markdown("#### Top ciudades por score promedio")
+                st.dataframe(
+                    _city_counts.rename(columns={"city": "Ciudad", "leads": "Leads", "avg_score": "Score Promedio"}),
+                    use_container_width=True, hide_index=True,
+                )
+    except Exception as _e:
+        st.warning(f"Mapa no disponible: {_e}")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB: 🕸️ Red — Interactive network graph
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_red:
+    st.subheader("🕸️ Grafo de Relaciones")
+    st.caption(
+        "Red de actores, proyectos y eventos detectados. "
+        "Nodos coloreados por perfil · Aristas por tipo de relación."
+    )
+
+    try:
+        from visualization.network_renderer import render_network_html
+        from visualization.export_graph import export_graph
+        from network_engine import parse_mentions, build_graph, compute_graph_metrics
+
+        _red_df = get_leads_df(config.sqlite_db_path)
+
+        _col_red1, _col_red2, _col_red3 = st.columns([2, 2, 3])
+        with _col_red1:
+            _min_conf = st.slider("Confianza mínima de arista", 0.0, 1.0, 0.4, 0.05)
+        with _col_red2:
+            _max_nodes = st.slider("Máx. nodos visibles", 50, 300, 150, 25)
+        with _col_red3:
+            _export_fmt = st.selectbox("Exportar grafo como", ["gexf", "graphml", "json", "csv"])
+
+        if not _red_df.empty:
+            # Build leads list from DB
+            _net_leads = []
+            for _, _r in _red_df.iterrows():
+                try:
+                    _raw = json.loads(_r.get("raw_data") or "{}")
+                except Exception:
+                    _raw = {}
+                _net_leads.append(Lead(
+                    source_platform=str(_r.get("source_platform") or ""),
+                    search_term=str(_r.get("search_term") or ""),
+                    name=str(_r.get("name") or ""),
+                    social_handle=str(_r.get("social_handle") or ""),
+                    bio=str(_r.get("bio") or ""),
+                    lead_type=str(_r.get("lead_type") or ""),
+                    lead_profile=str(_r.get("lead_profile") or "aspirational"),
+                    city=str(_r.get("city") or ""),
+                    country=str(_r.get("country") or ""),
+                    followers=str(_r.get("followers") or ""),
+                    score=int(_r.get("score") or 0),
+                    raw_data=_raw,
+                ))
+
+            with st.spinner("Construyendo grafo…"):
+                _mentions = []
+                for _l in _net_leads:
+                    _mentions.extend(parse_mentions(_l))
+                _graph = build_graph(_net_leads, _mentions)
+                _metrics = compute_graph_metrics(_graph)
+
+            st.caption(
+                f"**{_graph.node_count}** nodos · **{_graph.edge_count}** aristas · "
+                f"**{len(_mentions)}** menciones detectadas"
+            )
+
+            _net_html = render_network_html(_graph, min_confidence=_min_conf, max_nodes=_max_nodes)
+            st.components.v1.html(_net_html, height=600, scrolling=False)
+
+            # ── Legend ────────────────────────────────────────────────────────
+            st.markdown("""
+<small>
+🟣 Specifier &nbsp;|&nbsp; 🔴 Buyer &nbsp;|&nbsp; 🟠 Project actor &nbsp;|&nbsp;
+🔵 Influencer &nbsp;|&nbsp; 🟢 Proyecto &nbsp;|&nbsp; 🟡 Evento &nbsp;|&nbsp;
+⬜ Aspirational
+</small>
+""", unsafe_allow_html=True)
+
+            # ── Export button ─────────────────────────────────────────────────
+            _exp_bytes, _exp_name, _exp_mime = export_graph(_graph, fmt=_export_fmt)
+            if _exp_bytes:
+                st.download_button(
+                    f"⬇️ Descargar grafo ({_export_fmt.upper()})",
+                    _exp_bytes, _exp_name, _exp_mime,
+                )
+
+            # ── Top influencers table ─────────────────────────────────────────
+            if _metrics:
+                _met_rows = sorted(_metrics.values(), key=lambda m: m.network_influence_score, reverse=True)[:12]
+                _met_data = [{
+                    "Handle": m.handle,
+                    "Influence": round(m.network_influence_score, 1),
+                    "Centralidad": round(m.actor_centrality_score, 1),
+                    "PageRank": round(m.pagerank_score, 1),
+                } for m in _met_rows]
+                st.markdown("#### Top actores por influencia de red")
+                st.dataframe(pd.DataFrame(_met_data), use_container_width=True, hide_index=True)
+        else:
+            st.info("No hay leads en la base de datos todavía.")
+
+    except Exception as _e:
+        st.warning(f"Grafo no disponible: {_e}")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB: 🔍 Discovery — Opportunity heatmap + project clusters + AI insights
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_discovery:
+    st.subheader("🔍 Opportunity Discovery")
+    st.caption(
+        "Heatmap de oportunidades · Clusters de proyectos detectados · "
+        "Preguntas de inteligencia comercial."
+    )
+
+    try:
+        from visualization.opportunity_heatmap import render_opportunity_heatmap
+        from project_engine import detect_project, cluster_leads, rank_clusters
+        from project_engine.project_ranker import enrich_cluster_scores
+        from ai_engine import analyse_project_cluster
+
+        _disc_df = get_leads_df(config.sqlite_db_path)
+
+        # ── Heatmap ───────────────────────────────────────────────────────────
+        st.markdown("#### Opportunity Score · Ciudad × Tipo de Lead")
+        if not _disc_df.empty:
+            _hm_fig = render_opportunity_heatmap(_disc_df)
+            st.plotly_chart(_hm_fig, use_container_width=True)
+        else:
+            st.info("Sin datos de leads para el heatmap.")
+
+        st.divider()
+
+        # ── Project clusters ──────────────────────────────────────────────────
+        st.markdown("#### Clusters de Proyectos Detectados")
+
+        if not _disc_df.empty:
+            _disc_leads = []
+            for _, _r in _disc_df.iterrows():
+                try:
+                    _raw2 = json.loads(_r.get("raw_data") or "{}")
+                except Exception:
+                    _raw2 = {}
+                _disc_leads.append((Lead(
+                    source_platform=str(_r.get("source_platform") or ""),
+                    search_term=str(_r.get("search_term") or ""),
+                    name=str(_r.get("name") or ""),
+                    social_handle=str(_r.get("social_handle") or ""),
+                    bio=str(_r.get("bio") or ""),
+                    lead_type=str(_r.get("lead_type") or ""),
+                    lead_profile=str(_r.get("lead_profile") or "aspirational"),
+                    city=str(_r.get("city") or ""),
+                    country=str(_r.get("country") or ""),
+                    followers=str(_r.get("followers") or ""),
+                    score=int(_r.get("score") or 0),
+                    raw_data=_raw2,
+                ), _raw2, int(_r.get("id") or 0)))
+
+            with st.spinner("Detectando proyectos…"):
+                _det_inputs = []
+                for _l, _raw2, _lid in _disc_leads:
+                    _proj_score = float(_raw2.get("project_signal_score", 0))
+                    _det = detect_project(_l, _proj_score)
+                    if _det:
+                        _det_inputs.append((_l, _det, _lid))
+
+                _clusters = cluster_leads(_det_inputs)
+                for _c in _clusters:
+                    _c_scores = [_r2 for _, _r2, _lid in _disc_leads if _lid in _c.actor_ids]
+                    enrich_cluster_scores(_c, _c_scores)
+                _clusters = rank_clusters(_clusters)
+
+            if _clusters:
+                st.caption(f"**{len(_clusters)}** cluster(s) detectados — ordenados por oportunidad")
+                for _ci, _c in enumerate(_clusters[:10]):
+                    with st.expander(
+                        f"{'🔴' if _c.status=='active' else '🟣' if _c.status=='emerging' else '⚪'} "
+                        f"{_c.project_type.replace('_',' ').title()} — "
+                        f"{_c.location_city or 'Ubicación desconocida'} "
+                        f"| density={_c.opportunity_density:.2f} | actors={_c.actor_count}",
+                        expanded=_ci == 0,
+                    ):
+                        _ca, _cb, _cc = st.columns(3)
+                        _ca.metric("Status", _c.status.title())
+                        _cb.metric("Budget tier", _c.budget_tier.title())
+                        _cc.metric("Confidence", f"{_c.confidence:.0%}")
+
+                        _cd, _ce, _cf = st.columns(3)
+                        _cd.metric("Avg Specifier", f"{_c.avg_specifier_score:.0f}")
+                        _ce.metric("Avg Buying Power", f"{_c.avg_buying_power_score:.0f}")
+                        _cf.metric("Avg Event Signal", f"{_c.avg_event_signal_score:.0f}")
+
+                        if _c.timeline_hint:
+                            st.caption(f"Timeline: {_c.timeline_hint}")
+                        if _c.actor_handles:
+                            st.caption(f"Actores: {', '.join('@'+h for h in _c.actor_handles[:8])}")
+                        if _c.evidence_texts:
+                            st.caption(f"Evidencia: _{_c.evidence_texts[0][:120]}_")
+
+                        # AI analysis
+                        if st.button(f"🤖 Analizar con IA", key=f"ai_cluster_{_ci}"):
+                            with st.spinner("Analizando con Ollama…"):
+                                _ai_proj = analyse_project_cluster(_c)
+                            st.markdown(f"**{_ai_proj.project_name}** — {_ai_proj.urgency.replace('_',' ').title()}")
+                            st.markdown(f"_{_ai_proj.summary}_")
+                            st.markdown(f"**Approach:** {_ai_proj.recommended_approach}")
+                            st.markdown(f"**Budget:** {_ai_proj.estimated_budget_range}")
+                            if _ai_proj.flags:
+                                st.warning(" · ".join(_ai_proj.flags))
+            else:
+                st.info("No se detectaron clusters de proyectos. Enriquece leads con bio real para activar la detección.")
+
+        st.divider()
+
+        # ── Intelligence queries ──────────────────────────────────────────────
+        st.markdown("#### Preguntas de Inteligencia Comercial")
+        if not _disc_df.empty:
+            _q1, _q2 = st.columns(2)
+            with _q1:
+                st.markdown("**¿Quiénes son los especificadores clave?**")
+                _top_spec = _disc_df[_disc_df.get("specifier_score", 0) >= 40] if "specifier_score" in _disc_df.columns else pd.DataFrame()
+                if not _top_spec.empty:
+                    st.dataframe(
+                        _top_spec[["name","city","lead_type","specifier_score","opportunity_classification"]]
+                        .sort_values("specifier_score", ascending=False).head(8),
+                        use_container_width=True, hide_index=True,
+                    )
+                else:
+                    st.caption("Enriquece leads para ver especificadores.")
+
+            with _q2:
+                st.markdown("**¿Quiénes tienen señal de proyecto activo?**")
+                _top_proj = _disc_df[_disc_df.get("project_signal_score", 0) >= 40] if "project_signal_score" in _disc_df.columns else pd.DataFrame()
+                if not _top_proj.empty:
+                    st.dataframe(
+                        _top_proj[["name","city","lead_type","project_signal_score","opportunity_classification"]]
+                        .sort_values("project_signal_score", ascending=False).head(8),
+                        use_container_width=True, hide_index=True,
+                    )
+                else:
+                    st.caption("Enriquece leads para ver actores de proyecto.")
+
+    except Exception as _e:
+        st.warning(f"Discovery no disponible: {_e}")
+        import traceback; st.code(traceback.format_exc())
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB: 🔄 Feedback
