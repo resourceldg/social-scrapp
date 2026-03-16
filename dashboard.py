@@ -1266,7 +1266,6 @@ def _rm_layout(height: int = 360) -> dict:
     _axis = dict(
         gridcolor="rgba(245,240,230,0.06)", linecolor="rgba(245,240,230,0.10)",
         tickfont=dict(color="rgba(245,240,230,0.60)", size=11),
-        title=dict(font=dict(color="rgba(245,240,230,0.65)", size=12)),
         zerolinecolor="rgba(245,240,230,0.08)",
     )
     return dict(

@@ -97,10 +97,10 @@ def _node_color(attrs: dict) -> str:
 
 
 def _node_title(node_id: str, attrs: dict) -> str:
-    """HTML tooltip for a node."""
-    parts = [f"<b>{attrs.get('label', node_id)}</b>"]
+    """Plain-text tooltip for a node (vis-network 9.x sanitizes HTML)."""
+    label = attrs.get("label", node_id)
     ntype = attrs.get("type", "lead")
-    parts.append(f"Type: {ntype}")
+    parts = [label, f"Type: {ntype}"]
     if ntype == "lead":
         parts.append(f"Platform: {attrs.get('platform','')}")
         parts.append(f"Lead type: {attrs.get('lead_type','')}")
@@ -110,11 +110,11 @@ def _node_title(node_id: str, attrs: dict) -> str:
             parts.append(f"Opp. score: {opp}")
         opp_c = attrs.get("opportunity_classification", "")
         if opp_c:
-            parts.append(f"Classification: {opp_c}")
+            parts.append(f"Class: {opp_c}")
         city = attrs.get("city", "")
         if city:
             parts.append(f"City: {city}")
-    return "<br>".join(parts)
+    return "\n".join(parts)
 
 
 def render_network_html(
@@ -216,8 +216,8 @@ def render_network_html(
             rel = edata.get("relation_type", "MENTIONED_WITH")
             style = _EDGE_STYLES.get(rel, _DEFAULT_EDGE_STYLE)
             tooltip = (
-                f"<b>{rel}</b><br>"
-                f"confidence: {conf:.2f}<br>"
+                f"{rel}\n"
+                f"confidence: {conf:.2f}\n"
                 f"platform: {edata.get('platform','')}"
             )
             net.add_edge(
