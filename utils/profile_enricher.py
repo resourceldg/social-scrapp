@@ -35,6 +35,7 @@ from models import Lead
 from utils.classifiers import classify_lead, extract_interest_signals
 from utils.contact_enricher import ContactEnricher
 from utils.helpers import check_url_reachable, detect_location, extract_emails, extract_follower_count, extract_phones, extract_website
+from ai_engine import analyse_lead, is_ai_available
 from utils.llm_classifier import classify_bio, is_ollama_available
 from utils.scoring import score_lead_full, score_lead_with_profile
 
@@ -82,41 +83,60 @@ def _re_enrich(lead: Lead) -> Lead:
     signals = lead.interest_signals or extract_interest_signals(text)
     updated = dataclasses.replace(lead, lead_type=lead_type, interest_signals=signals)
 
-    # LLM classification: run if Ollama is available and bio is meaningful
+    # ── Step 1: rule-based lead_type from bio (fast, always runs) ────────────
     with _ollama_lock:
         if _ollama_checked is None:
             _ollama_checked = is_ollama_available()
-            if _ollama_checked:
-                logger.info("Ollama available — LLM bio classification enabled.")
-            else:
-                logger.info("Ollama not available — using rule-based classification only.")
+            logger.info(
+                "Ollama %s — %s",
+                "available" if _ollama_checked else "not available",
+                "AI reasoning enabled." if _ollama_checked else "rule-based classification only.",
+            )
         ollama_active = _ollama_checked
 
+    # Legacy classify_bio for lead_type only (fast 1.5b call, keeps backward compat)
     if ollama_active and clean_bio and len(clean_bio.strip()) >= 20:
         llm = classify_bio(clean_bio, existing_lead_type=updated.lead_type)
         if llm["source"] == "llm":
-            logger.debug(
-                "LLM classified %s: type=%s intent=%d reason=%s",
-                updated.social_handle, llm["lead_type"], llm["buying_intent"], llm["reason"],
-            )
-            updated = dataclasses.replace(
-                updated,
-                lead_type=llm["lead_type"],
-            )
-            # Store buying_intent in engagement_hint for visibility in dashboard
+            updated = dataclasses.replace(updated, lead_type=llm["lead_type"])
             if llm["buying_intent"] > 0:
                 hint = f"intent:{llm['buying_intent']}/10 — {llm['reason']}"
                 updated = dataclasses.replace(updated, engagement_hint=hint)
 
+    # ── Step 2: full scoring pipeline ────────────────────────────────────────
     new_score, new_profile, result = score_lead_full(updated)
+
+    # ── Step 3: AI reasoning (structured multi-field analysis) ───────────────
+    ai = analyse_lead(updated, result)
+
+    if ai.source == "ai":
+        logger.debug(
+            "AI analysis %s/%s: action=%s priority=%d type=%s conf=%.2f",
+            updated.source_platform, updated.social_handle or updated.name,
+            ai.recommended_action, ai.ai_priority_score, ai.lead_type, ai.confidence,
+        )
+        # Upgrade lead_type if AI is more specific
+        if ai.lead_type and ai.lead_type != "none" and ai.lead_type != updated.lead_type:
+            updated = dataclasses.replace(updated, lead_type=ai.lead_type)
+
     bi = {
-        "opportunity_score": result.opportunity_score,
-        "buying_power_score": round(result.buying_power_score, 1),
-        "specifier_score": round(result.specifier_score, 1),
-        "project_signal_score": round(result.project_signal_score, 1),
-        "event_signal_score": round(result.event_signal_score, 1),
-        "network_influence_score": round(result.network_influence_score, 1),
+        "opportunity_score":        result.opportunity_score,
+        "buying_power_score":       round(result.buying_power_score, 1),
+        "specifier_score":          round(result.specifier_score, 1),
+        "project_signal_score":     round(result.project_signal_score, 1),
+        "event_signal_score":       round(result.event_signal_score, 1),
+        "network_influence_score":  round(result.network_influence_score, 1),
         "opportunity_classification": result.opportunity_classification,
+        # AI reasoning fields
+        "ai_priority_score":        ai.ai_priority_score,
+        "ai_recommended_action":    ai.recommended_action,
+        "ai_contact_angle":         ai.contact_angle,
+        "ai_project_context":       ai.project_context,
+        "ai_buying_intent":         ai.buying_intent,
+        "ai_specifier_strength":    ai.specifier_strength,
+        "ai_confidence":            ai.confidence,
+        "ai_source":                ai.source,
+        "ai_reasons":               ai.reasons,
     }
     raw_data = {**(updated.raw_data or {}), **bi}
     return dataclasses.replace(updated, score=new_score, lead_profile=new_profile, raw_data=raw_data)
