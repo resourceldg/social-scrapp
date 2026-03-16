@@ -31,19 +31,599 @@ from utils.database import (
 )
 
 # ── Page config ────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Lead Intelligence", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Lead Intelligence · Rare & Magic", page_icon="◆", layout="wide")
 
 ENV_PATH = Path(".env")
+
+# ── Rare & Magic Design System ─────────────────────────────────────────────────
+_RM_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Gilda+Display&family=Inter:wght@300;400;500&display=swap');
+
+/* ── Variables ──────────────────────────────────────────────────────────────── */
+:root {
+    --rm-bg:          #0F0E0C;
+    --rm-bg-card:     #141210;
+    --rm-bg-elevated: #1C1A17;
+    --rm-fg:          #F5F0E6;
+    --rm-fg-muted:    rgba(245,240,230,0.65);
+    --rm-fg-subtle:   rgba(245,240,230,0.38);
+    --rm-gold:        #C4A35A;
+    --rm-gold-dim:    rgba(196,163,90,0.15);
+    --rm-gold-hover:  rgba(196,163,90,0.25);
+    --rm-rust:        #A0522D;
+    --rm-warm-gray:   #6B6560;
+    --rm-border:      rgba(245,240,230,0.07);
+    --rm-border-md:   rgba(245,240,230,0.14);
+    --rm-border-hi:   rgba(245,240,230,0.22);
+    --rm-radius:      3px;
+    --rm-green:       #5C9E6E;
+    --rm-red:         #C0546A;
+}
+
+/* ── Base & Background ──────────────────────────────────────────────────────── */
+html, body { background-color: var(--rm-bg) !important; }
+
+.stApp,
+[data-testid="stAppViewContainer"],
+[data-testid="stApp"] {
+    background-color: var(--rm-bg) !important;
+    font-family: 'Inter', sans-serif !important;
+}
+
+section.main {
+    background-color: var(--rm-bg) !important;
+}
+
+section.main > div.block-container {
+    background-color: var(--rm-bg) !important;
+    padding-top: 1.75rem !important;
+    padding-bottom: 3rem !important;
+    padding-left: 2.5rem !important;
+    padding-right: 2.5rem !important;
+    max-width: 1440px !important;
+}
+
+/* ── Scrollbar — visible & styled ──────────────────────────────────────────── */
+::-webkit-scrollbar               { width: 7px; height: 7px; }
+::-webkit-scrollbar-track         { background: var(--rm-bg); }
+::-webkit-scrollbar-thumb         { background: #3A3530; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover   { background: var(--rm-warm-gray); }
+::-webkit-scrollbar-corner        { background: var(--rm-bg); }
+
+/* ── Streamlit header bar ───────────────────────────────────────────────────── */
+[data-testid="stHeader"] {
+    background-color: var(--rm-bg) !important;
+    border-bottom: 1px solid var(--rm-border) !important;
+}
+[data-testid="stDecoration"] { display: none !important; }
+[data-testid="stToolbar"]    { right: 2rem !important; }
+
+/* ── Typography ─────────────────────────────────────────────────────────────── */
+h1, h2, h3, h4 {
+    font-family: 'Gilda Display', serif !important;
+    color: var(--rm-fg) !important;
+    letter-spacing: 0.03em !important;
+    font-weight: 400 !important;
+    line-height: 1.25 !important;
+}
+h1 { font-size: 2rem !important; }
+h2 { font-size: 1.5rem !important; }
+h3 { font-size: 1.2rem !important; }
+h4 { font-size: 1rem !important; }
+
+p, li {
+    font-family: 'Inter', sans-serif !important;
+    font-size: 15px !important;
+    line-height: 1.65 !important;
+    color: var(--rm-fg) !important;
+}
+
+/* caption */
+[data-testid="stCaptionContainer"] p,
+.stCaption {
+    color: var(--rm-fg-muted) !important;
+    font-size: 13px !important;
+    letter-spacing: 0.025em !important;
+}
+
+/* markdown body */
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] li {
+    font-size: 15px !important;
+    color: var(--rm-fg) !important;
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] {
+    background: transparent !important;
+    border-bottom: 1px solid var(--rm-border) !important;
+    gap: 0 !important;
+    padding: 0 !important;
+    margin-bottom: 1.5rem !important;
+}
+
+.stTabs [data-baseweb="tab"] {
+    background: transparent !important;
+    color: var(--rm-fg-subtle) !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.1em !important;
+    text-transform: uppercase !important;
+    padding: 0.8rem 1.2rem !important;
+    border: none !important;
+    border-radius: 0 !important;
+    transition: color 0.2s ease !important;
+    white-space: nowrap !important;
+}
+
+.stTabs [data-baseweb="tab"]:hover {
+    color: var(--rm-fg) !important;
+    background: transparent !important;
+}
+
+.stTabs [aria-selected="true"] {
+    color: var(--rm-gold) !important;
+    background: transparent !important;
+}
+
+.stTabs [data-baseweb="tab-highlight"] {
+    background-color: var(--rm-gold) !important;
+    height: 2px !important;
+}
+
+.stTabs [data-baseweb="tab-border"] {
+    display: none !important;
+}
+
+/* ── Metric cards ────────────────────────────────────────────────────────────── */
+[data-testid="metric-container"] {
+    background: var(--rm-bg-card) !important;
+    border: 1px solid var(--rm-border) !important;
+    border-radius: var(--rm-radius) !important;
+    padding: 1.25rem 1.5rem !important;
+    transition: border-color 0.25s ease !important;
+}
+[data-testid="metric-container"]:hover {
+    border-color: var(--rm-border-md) !important;
+}
+[data-testid="stMetricLabel"] {
+    font-family: 'Inter', sans-serif !important;
+}
+[data-testid="stMetricLabel"] p {
+    color: var(--rm-fg-muted) !important;
+    font-size: 11px !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.14em !important;
+    text-transform: uppercase !important;
+}
+[data-testid="stMetricValue"] {
+    color: var(--rm-gold) !important;
+    font-family: 'Gilda Display', serif !important;
+    font-size: 2.2rem !important;
+    letter-spacing: 0.02em !important;
+}
+[data-testid="stMetricDelta"] svg { display: none !important; }
+[data-testid="stMetricDeltaIcon-Up"]   { color: var(--rm-green) !important; }
+[data-testid="stMetricDeltaIcon-Down"] { color: var(--rm-red) !important; }
+
+/* ── Expanders ───────────────────────────────────────────────────────────────── */
+[data-testid="stExpander"] {
+    background: var(--rm-bg-card) !important;
+    border: 1px solid var(--rm-border) !important;
+    border-radius: var(--rm-radius) !important;
+    margin-bottom: 0.5rem !important;
+    overflow: hidden !important;
+}
+[data-testid="stExpander"] details summary {
+    color: var(--rm-fg) !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    padding: 0.9rem 1.1rem !important;
+    letter-spacing: 0.02em !important;
+    transition: color 0.2s ease !important;
+}
+[data-testid="stExpander"] details summary:hover {
+    color: var(--rm-gold) !important;
+}
+[data-testid="stExpander"] details[open] summary {
+    border-bottom: 1px solid var(--rm-border) !important;
+}
+[data-testid="stExpander"] details > div {
+    background: var(--rm-bg-card) !important;
+    padding: 1rem !important;
+}
+
+/* ── Text inputs ─────────────────────────────────────────────────────────────── */
+.stTextInput input,
+.stTextArea textarea,
+.stNumberInput input {
+    background: var(--rm-bg-elevated) !important;
+    border: 1px solid var(--rm-border-md) !important;
+    border-radius: var(--rm-radius) !important;
+    color: var(--rm-fg) !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 14px !important;
+    padding: 0.6rem 0.875rem !important;
+    transition: border-color 0.2s ease !important;
+}
+.stTextInput input:focus,
+.stTextArea textarea:focus,
+.stNumberInput input:focus {
+    border-color: var(--rm-gold) !important;
+    box-shadow: 0 0 0 2px rgba(196,163,90,0.18) !important;
+    outline: none !important;
+}
+.stTextArea textarea {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace !important;
+    font-size: 13px !important;
+}
+
+/* ── Selectbox / Multiselect ─────────────────────────────────────────────────── */
+.stSelectbox [data-baseweb="select"] > div,
+.stMultiSelect [data-baseweb="select"] > div {
+    background: var(--rm-bg-elevated) !important;
+    border: 1px solid var(--rm-border-md) !important;
+    border-radius: var(--rm-radius) !important;
+    color: var(--rm-fg) !important;
+    font-size: 14px !important;
+    transition: border-color 0.2s ease !important;
+}
+.stSelectbox [data-baseweb="select"] > div:focus-within,
+.stMultiSelect [data-baseweb="select"] > div:focus-within {
+    border-color: var(--rm-gold) !important;
+}
+[data-baseweb="select"] span,
+[data-baseweb="select"] input {
+    color: var(--rm-fg) !important;
+    font-size: 14px !important;
+    background: transparent !important;
+}
+[data-baseweb="popover"] > div {
+    background: var(--rm-bg-elevated) !important;
+    border: 1px solid var(--rm-border-md) !important;
+    border-radius: var(--rm-radius) !important;
+}
+[data-baseweb="menu"] li {
+    color: var(--rm-fg) !important;
+    font-size: 14px !important;
+    background: transparent !important;
+    padding: 0.5rem 1rem !important;
+}
+[data-baseweb="menu"] li:hover,
+[data-baseweb="option"]:hover {
+    background: var(--rm-gold-hover) !important;
+    color: var(--rm-fg) !important;
+}
+/* multiselect tags */
+[data-baseweb="tag"] {
+    background: var(--rm-gold-dim) !important;
+    border: 1px solid rgba(196,163,90,0.3) !important;
+    border-radius: 2px !important;
+}
+[data-baseweb="tag"] span { color: var(--rm-gold) !important; font-size: 12px !important; }
+
+/* ── Buttons ─────────────────────────────────────────────────────────────────── */
+.stButton > button {
+    background: transparent !important;
+    border: 1px solid var(--rm-gold) !important;
+    border-radius: var(--rm-radius) !important;
+    color: var(--rm-gold) !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.1em !important;
+    text-transform: uppercase !important;
+    padding: 0.5rem 1.25rem !important;
+    transition: all 0.2s ease !important;
+    white-space: nowrap !important;
+}
+.stButton > button:hover {
+    background: var(--rm-gold) !important;
+    color: #1A1A1A !important;
+    box-shadow: none !important;
+}
+.stButton > button:focus {
+    outline: 2px solid var(--rm-gold) !important;
+    outline-offset: 2px !important;
+    box-shadow: none !important;
+}
+/* primary variant */
+.stButton > button[kind="primary"] {
+    background: var(--rm-gold) !important;
+    color: #1A1A1A !important;
+}
+.stButton > button[kind="primary"]:hover {
+    background: #F5F0E6 !important;
+    border-color: #F5F0E6 !important;
+}
+/* download button same style */
+.stDownloadButton > button {
+    background: transparent !important;
+    border: 1px solid var(--rm-border-hi) !important;
+    color: var(--rm-fg-muted) !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.08em !important;
+    text-transform: uppercase !important;
+    border-radius: var(--rm-radius) !important;
+    padding: 0.5rem 1.25rem !important;
+    transition: all 0.2s ease !important;
+}
+.stDownloadButton > button:hover {
+    border-color: var(--rm-gold) !important;
+    color: var(--rm-gold) !important;
+    background: transparent !important;
+}
+
+/* ── Alerts ──────────────────────────────────────────────────────────────────── */
+[data-testid="stNotification"],
+.stAlert {
+    background: var(--rm-bg-card) !important;
+    border-radius: var(--rm-radius) !important;
+    font-size: 14px !important;
+    border-left: 3px solid var(--rm-gold) !important;
+    border-top: 1px solid var(--rm-border) !important;
+    border-right: 1px solid var(--rm-border) !important;
+    border-bottom: 1px solid var(--rm-border) !important;
+}
+[data-testid="stNotification"] p { font-size: 14px !important; }
+/* info = gold, success = green, warning = rust, error = red */
+div[data-testid="stNotification"][data-type="info"]    { border-left-color: var(--rm-gold) !important; }
+div[data-testid="stNotification"][data-type="success"] { border-left-color: var(--rm-green) !important; }
+div[data-testid="stNotification"][data-type="warning"] { border-left-color: var(--rm-rust) !important; }
+div[data-testid="stNotification"][data-type="error"]   { border-left-color: var(--rm-red) !important; }
+
+/* ── Dataframe ───────────────────────────────────────────────────────────────── */
+[data-testid="stDataFrameResizable"] {
+    border: 1px solid var(--rm-border) !important;
+    border-radius: var(--rm-radius) !important;
+    overflow: hidden !important;
+}
+.stDataFrame thead th {
+    background: var(--rm-bg-elevated) !important;
+    color: var(--rm-fg-muted) !important;
+    font-size: 11px !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.1em !important;
+    text-transform: uppercase !important;
+    border-bottom: 1px solid var(--rm-border-md) !important;
+}
+.stDataFrame tbody tr:hover td {
+    background: var(--rm-gold-dim) !important;
+}
+.stDataFrame td {
+    font-size: 14px !important;
+    color: var(--rm-fg) !important;
+}
+
+/* ── Slider ──────────────────────────────────────────────────────────────────── */
+[data-baseweb="slider"] div[role="slider"] {
+    background: var(--rm-gold) !important;
+    border: 2px solid var(--rm-gold) !important;
+}
+[data-baseweb="slider"] div[data-testid="stTickBar"] > div {
+    color: var(--rm-fg-muted) !important;
+    font-size: 12px !important;
+}
+
+/* ── Progress bar ────────────────────────────────────────────────────────────── */
+.stProgress > div > div > div > div {
+    background: linear-gradient(90deg, var(--rm-gold), #D4B570) !important;
+}
+.stProgress > div > div {
+    background: var(--rm-bg-elevated) !important;
+    border-radius: 2px !important;
+}
+
+/* ── Checkbox & Radio ────────────────────────────────────────────────────────── */
+.stCheckbox label, .stRadio label {
+    font-size: 14px !important;
+    color: var(--rm-fg) !important;
+}
+.stCheckbox [data-baseweb="checkbox"] input:checked ~ div {
+    background: var(--rm-gold) !important;
+    border-color: var(--rm-gold) !important;
+}
+
+/* ── Form labels ─────────────────────────────────────────────────────────────── */
+.stSelectbox label,
+.stMultiSelect label,
+.stTextInput label,
+.stSlider label,
+.stNumberInput label,
+.stTextArea label,
+.stCheckbox > label > div[data-testid="stMarkdownContainer"] p,
+.stRadio label > div > p {
+    color: var(--rm-fg-muted) !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.1em !important;
+    text-transform: uppercase !important;
+    margin-bottom: 0.4rem !important;
+}
+
+/* ── Dividers ────────────────────────────────────────────────────────────────── */
+hr {
+    border: none !important;
+    border-top: 1px solid var(--rm-border) !important;
+    margin: 1.5rem 0 !important;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+    background: var(--rm-bg-card) !important;
+    border-right: 1px solid var(--rm-border) !important;
+}
+[data-testid="stSidebar"] * { color: var(--rm-fg) !important; }
+
+/* ── Dialog / Modal ──────────────────────────────────────────────────────────── */
+[data-testid="stDialog"] > div,
+div[role="dialog"] {
+    background: var(--rm-bg-card) !important;
+    border: 1px solid var(--rm-border-md) !important;
+    border-radius: 6px !important;
+    box-shadow: 0 24px 48px rgba(0,0,0,0.6) !important;
+}
+[data-testid="stDialog"] h1,
+[data-testid="stDialog"] h2,
+div[role="dialog"] h1,
+div[role="dialog"] h2 {
+    font-family: 'Gilda Display', serif !important;
+    color: var(--rm-fg) !important;
+}
+div[role="dialog"] > div > div:first-child {
+    border-bottom: 1px solid var(--rm-border) !important;
+    padding-bottom: 0.75rem !important;
+    margin-bottom: 0.75rem !important;
+}
+/* Modal close button */
+[data-testid="stDialog"] button[aria-label="Close"],
+div[role="dialog"] button[aria-label="Close"] {
+    color: var(--rm-fg-muted) !important;
+    background: transparent !important;
+    border: none !important;
+    font-size: 1.25rem !important;
+    transition: color 0.2s ease !important;
+}
+[data-testid="stDialog"] button[aria-label="Close"]:hover {
+    color: var(--rm-fg) !important;
+}
+
+/* ── Toast / status messages ─────────────────────────────────────────────────── */
+[data-testid="stToast"] {
+    background: var(--rm-bg-elevated) !important;
+    border: 1px solid var(--rm-border-md) !important;
+    border-radius: var(--rm-radius) !important;
+    color: var(--rm-fg) !important;
+}
+
+/* ── Lead table: st.dataframe row highlight ───────────────────────────────────── */
+[data-testid="stDataFrameResizable"] iframe {
+    background: var(--rm-bg) !important;
+}
+
+/* ── Section subheaders inside tabs ─────────────────────────────────────────── */
+[data-testid="stMarkdownContainer"] h3,
+[data-testid="stMarkdownContainer"] h4 {
+    color: var(--rm-fg-muted) !important;
+    font-size: 11px !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.15em !important;
+    text-transform: uppercase !important;
+    font-family: 'Inter', sans-serif !important;
+    margin-top: 1.5rem !important;
+    margin-bottom: 0.75rem !important;
+    padding-bottom: 0.5rem !important;
+    border-bottom: 1px solid var(--rm-border) !important;
+}
+
+/* ── Plotly chart container background ───────────────────────────────────────── */
+[data-testid="stPlotlyChart"] {
+    background: transparent !important;
+    border: 1px solid var(--rm-border) !important;
+    border-radius: var(--rm-radius) !important;
+    overflow: hidden !important;
+}
+
+/* ── Info/warning/success/error boxes ────────────────────────────────────────── */
+[data-testid="stAlertContainer"] {
+    background: var(--rm-bg-card) !important;
+    border-radius: var(--rm-radius) !important;
+    font-size: 14px !important;
+}
+
+/* ── Responsive: tighter padding on narrower screens ─────────────────────────── */
+@media (max-width: 768px) {
+    section.main > div.block-container {
+        padding-left: 1.25rem !important;
+        padding-right: 1.25rem !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+        font-size: 11px !important;
+        padding: 0.65rem 0.75rem !important;
+    }
+}
+
+/* ── Code blocks ─────────────────────────────────────────────────────────────── */
+code, pre {
+    background: var(--rm-bg-elevated) !important;
+    border: 1px solid var(--rm-border) !important;
+    border-radius: var(--rm-radius) !important;
+    color: var(--rm-gold) !important;
+    font-size: 13px !important;
+}
+
+/* ── Spinner ─────────────────────────────────────────────────────────────────── */
+[data-testid="stSpinner"] > div > div {
+    border-top-color: var(--rm-gold) !important;
+}
+
+/* ── st.columns gap ──────────────────────────────────────────────────────────── */
+[data-testid="column"] { padding: 0 0.5rem !important; }
+[data-testid="column"]:first-child { padding-left: 0 !important; }
+[data-testid="column"]:last-child  { padding-right: 0 !important; }
+
+/* ── Selection color ─────────────────────────────────────────────────────────── */
+::selection {
+    background: rgba(196,163,90,0.28) !important;
+    color: var(--rm-fg) !important;
+}
+
+/* ── Smooth scroll ───────────────────────────────────────────────────────────── */
+html { scroll-behavior: smooth; }
+
+/* ── Custom header ───────────────────────────────────────────────────────────── */
+.rm-header {
+    padding: 0 0 1.75rem 0;
+    border-bottom: 1px solid var(--rm-border);
+    margin-bottom: 0.25rem;
+}
+.rm-eyebrow {
+    font-family: 'Inter', sans-serif !important;
+    font-size: 11px !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.25em !important;
+    text-transform: uppercase !important;
+    color: var(--rm-gold) !important;
+    margin: 0 0 0.75rem 0 !important;
+}
+.rm-title {
+    font-family: 'Gilda Display', serif !important;
+    font-size: 2.4rem !important;
+    font-weight: 400 !important;
+    color: var(--rm-fg) !important;
+    letter-spacing: 0.03em !important;
+    margin: 0 0 0.5rem 0 !important;
+    line-height: 1.2 !important;
+}
+.rm-subtitle {
+    font-family: 'Inter', sans-serif !important;
+    font-size: 14px !important;
+    color: var(--rm-fg-muted) !important;
+    letter-spacing: 0.04em !important;
+    margin: 0 !important;
+}
+"""
 
 config = load_config()
 init_db(config.sqlite_db_path)
 
-st.title("🎯 Lead Intelligence")
-st.caption("Arte contemporáneo · Collectible design · Interiorismo · Arquitectura · Hospitalidad")
+# Inject theme immediately after DB init (must be before any other st.* calls)
+st.markdown(f"<style>{_RM_CSS}</style>", unsafe_allow_html=True)
+
+# Custom header — replaces st.title + st.caption
+st.markdown("""
+<div class="rm-header">
+    <p class="rm-eyebrow">Commercial Intelligence</p>
+    <h1 class="rm-title">Lead Intelligence</h1>
+    <p class="rm-subtitle">Arte contemporáneo &nbsp;·&nbsp; Collectible design &nbsp;·&nbsp; Interiorismo &nbsp;·&nbsp; Arquitectura &nbsp;·&nbsp; Hospitalidad</p>
+</div>
+""", unsafe_allow_html=True)
 
 tab_opp, tab_analisis, tab_mapa, tab_red, tab_discovery, tab_feedback, tab_sistema, tab_prog, tab_config, tab_docs = st.tabs([
-    "🎯 Oportunidades", "📊 Análisis", "🗺️ Mapa", "🕸️ Red", "🔍 Discovery",
-    "🔄 Feedback", "📡 Sistema", "⏰ Programación", "⚙️ Configuración", "📖 Documentación"
+    "Oportunidades", "Análisis", "Mapa", "Red", "Discovery",
+    "Feedback", "Sistema", "Programación", "Configuración", "Documentación"
 ])
 
 # ── Cron / process utilities (used by tab_prog) ────────────────────────────────
