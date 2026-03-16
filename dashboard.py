@@ -1259,6 +1259,67 @@ def _safe_str(v) -> str:
     return "" if s in ("nan", "None", "NaT") else s
 
 
+# ── Plotly Rare & Magic theme + geo helpers ────────────────────────────────────
+
+def _rm_layout(height: int = 360) -> dict:
+    """Return Plotly layout kwargs matching the Rare & Magic dark theme."""
+    _axis = dict(
+        gridcolor="rgba(245,240,230,0.06)", linecolor="rgba(245,240,230,0.10)",
+        tickfont=dict(color="rgba(245,240,230,0.60)", size=11),
+        titlefont=dict(color="rgba(245,240,230,0.65)", size=12),
+        zerolinecolor="rgba(245,240,230,0.08)",
+    )
+    return dict(
+        paper_bgcolor="#141210", plot_bgcolor="#0F0E0C",
+        font=dict(family="Inter, sans-serif", color="#F5F0E6", size=12),
+        title=dict(font=dict(family="Gilda Display, serif", color="#F5F0E6", size=14), x=0.02),
+        xaxis=_axis, yaxis=_axis, height=height,
+        margin=dict(l=16, r=16, t=44, b=16),
+        legend=dict(
+            bgcolor="rgba(0,0,0,0)", bordercolor="rgba(245,240,230,0.10)",
+            font=dict(color="rgba(245,240,230,0.75)", size=11),
+        ),
+    )
+
+
+def _rm_chart_header(title: str, eyebrow: str = "") -> None:
+    _eb = (
+        f'<p style="font:500 11px/1 Inter,sans-serif;letter-spacing:.22em;'
+        f'text-transform:uppercase;color:#C4A35A;margin:0 0 .4rem">{eyebrow}</p>'
+        if eyebrow else ""
+    )
+    st.markdown(
+        f'<div style="margin:1.25rem 0 .6rem">{_eb}'
+        f'<h3 style="font:400 1.05rem/1.2 \'Gilda Display\',serif;color:#F5F0E6;margin:0">{title}</h3>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+_CITY_COORDS: dict = {
+    "miami": (25.77, -80.19), "new york": (40.71, -74.00), "los angeles": (34.05, -118.24),
+    "london": (51.51, -0.13), "paris": (48.85, 2.35), "milan": (45.46, 9.19),
+    "barcelona": (41.38, 2.17), "madrid": (40.42, -3.70), "dubai": (25.20, 55.27),
+    "singapore": (1.35, 103.82), "hong kong": (22.32, 114.17), "tokyo": (35.68, 139.69),
+    "sydney": (-33.87, 151.21), "toronto": (43.65, -79.38),
+    "mexico city": (19.43, -99.13), "ciudad de mexico": (19.43, -99.13),
+    "buenos aires": (-34.60, -58.38), "são paulo": (-23.55, -46.63),
+    "sao paulo": (-23.55, -46.63), "rio de janeiro": (-22.91, -43.17),
+    "bogotá": (4.71, -74.07), "bogota": (4.71, -74.07),
+    "santiago": (-33.46, -70.65), "lima": (-12.05, -77.04),
+    "amsterdam": (52.37, 4.90), "berlin": (52.52, 13.40),
+    "vienna": (48.21, 16.37), "rome": (41.90, 12.50),
+    "florence": (43.77, 11.26), "lisbon": (38.72, -9.14),
+    "cape town": (-33.93, 18.42), "tel aviv": (32.08, 34.78),
+    "istanbul": (41.01, 28.95), "doha": (25.29, 51.53),
+    "tulum": (20.21, -87.46), "punta del este": (-34.97, -54.95),
+    "miami beach": (25.79, -80.13), "guadalajara": (20.66, -103.35),
+    "montevideo": (-34.90, -56.19), "medellin": (6.24, -75.58),
+    "monterrey": (25.67, -100.31), "ibiza": (38.91, 1.43),
+    "zurich": (47.38, 8.54), "geneva": (46.20, 6.15),
+}
+
+
 @st.dialog("🔍 Detalle del lead", width="large")
 def _lead_detail_modal(row: pd.Series, selected_mode: str, db_path) -> None:
     name     = _safe_str(row.get("name")) or "Sin nombre"
@@ -2344,78 +2405,161 @@ with tab_analisis:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB: 🗺️ Mapa — World map: project clusters + lead heatmap
+# TAB: 🗺️ Mapa — Geographic distribution of leads & projects (Plotly)
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_mapa:
-    st.subheader("🗺️ Mapa de Proyectos y Oportunidades")
-
     try:
-        from visualization.world_map import render_world_map_html
-        import components.v1 as _cv1_mapa
+        import plotly.express as px
+        import plotly.graph_objects as go
 
         _mapa_df = get_leads_df(config.sqlite_db_path)
 
-        st.caption(
-            "Clusters de proyectos inferidos · Heatmap de densidad de leads por ciudad. "
-            "Los círculos naranjas = proyectos activos · morados = emergentes."
-        )
+        _rm_chart_header("Distribución Geográfica de Leads", "Inteligencia territorial")
 
-        # No geocoded clusters yet (Phase 3 runs offline) — show lead heatmap only
-        _map_html = render_world_map_html(
-            clusters=None,
-            events=None,
-            leads_df=_mapa_df if not _mapa_df.empty else None,
-            height=500,
-        )
-        st.components.v1.html(_map_html, height=510, scrolling=False)
+        if _mapa_df.empty:
+            st.info("Sin datos de leads todavía. Ejecuta un scrape para poblar el mapa.")
+        else:
+            # ── Build city-level summary ───────────────────────────────────────
+            _city_col = "city" if "city" in _mapa_df.columns else None
+            _score_col = "score" if "score" in _mapa_df.columns else None
 
-        # ── Stats below map ───────────────────────────────────────────────────
-        if not _mapa_df.empty and "city" in _mapa_df.columns:
-            _city_counts = (
-                _mapa_df[_mapa_df["city"].notna() & (_mapa_df["city"] != "")]
-                .groupby("city")
-                .agg(leads=("score", "count"), avg_score=("score", "mean"))
-                .round(1)
-                .sort_values("avg_score", ascending=False)
-                .head(15)
-                .reset_index()
-            )
-            if not _city_counts.empty:
-                st.markdown("#### Top ciudades por score promedio")
-                st.dataframe(
-                    _city_counts.rename(columns={"city": "Ciudad", "leads": "Leads", "avg_score": "Score Promedio"}),
-                    use_container_width=True, hide_index=True,
+            if _city_col:
+                _geo_df = (
+                    _mapa_df[_mapa_df[_city_col].notna() & (_mapa_df[_city_col] != "")]
+                    .copy()
                 )
+                _geo_df["_city_key"] = _geo_df[_city_col].str.lower().str.strip()
+
+                _city_agg = (
+                    _geo_df.groupby("_city_key")
+                    .agg(
+                        city_display=(  _city_col, "first"),
+                        leads=(_city_col, "count"),
+                        avg_score=(_score_col, "mean") if _score_col else (_city_col, "count"),
+                    )
+                    .reset_index()
+                )
+                _city_agg["avg_score"] = _city_agg["avg_score"].round(1)
+
+                # Geocode
+                _city_agg["lat"] = _city_agg["_city_key"].map(lambda c: _CITY_COORDS.get(c, (None, None))[0])
+                _city_agg["lon"] = _city_agg["_city_key"].map(lambda c: _CITY_COORDS.get(c, (None, None))[1])
+                _city_agg = _city_agg.dropna(subset=["lat", "lon"])
+
+                # ── Summary KPIs ───────────────────────────────────────────────
+                _mc1, _mc2, _mc3, _mc4 = st.columns(4)
+                _mc1.metric("Ciudades mapeadas", len(_city_agg))
+                _mc2.metric("Leads georef.", int(_city_agg["leads"].sum()))
+                _mc3.metric("Score promedio", f"{_city_agg['avg_score'].mean():.1f}" if not _city_agg.empty else "—")
+                _top_city = _city_agg.sort_values("leads", ascending=False).iloc[0]["city_display"] if not _city_agg.empty else "—"
+                _mc4.metric("Ciudad líder", _top_city)
+
+                if not _city_agg.empty:
+                    # ── Scatter geo map ────────────────────────────────────────
+                    _map_fig = px.scatter_geo(
+                        _city_agg,
+                        lat="lat", lon="lon",
+                        size="leads",
+                        color="avg_score",
+                        hover_name="city_display",
+                        hover_data={"leads": True, "avg_score": True, "lat": False, "lon": False},
+                        color_continuous_scale=[
+                            [0.0, "rgba(196,163,90,0.25)"],
+                            [0.5, "#C4A35A"],
+                            [1.0, "#F5F0E6"],
+                        ],
+                        size_max=48,
+                        labels={"avg_score": "Score", "leads": "Leads"},
+                    )
+                    _map_fig.update_layout(
+                        **_rm_layout(height=460),
+                        geo=dict(
+                            bgcolor="#0F0E0C",
+                            landcolor="#1C1A17",
+                            oceancolor="#0F0E0C",
+                            lakecolor="#0F0E0C",
+                            coastlinecolor="rgba(245,240,230,0.12)",
+                            countrycolor="rgba(245,240,230,0.08)",
+                            showland=True, showocean=True, showlakes=True,
+                            showcountries=True, showcoastlines=True,
+                            projection_type="natural earth",
+                        ),
+                        coloraxis_colorbar=dict(
+                            title="Score",
+                            tickfont=dict(color="rgba(245,240,230,0.65)", size=10),
+                            titlefont=dict(color="rgba(245,240,230,0.65)", size=11),
+                            bgcolor="rgba(0,0,0,0)",
+                            bordercolor="rgba(245,240,230,0.10)",
+                            len=0.6,
+                        ),
+                        margin=dict(l=0, r=0, t=20, b=0),
+                    )
+                    _map_fig.update_traces(marker=dict(line=dict(width=0.5, color="rgba(196,163,90,0.4)")))
+                    st.plotly_chart(_map_fig, use_container_width=True)
+
+                    # ── City ranking table + bar chart ─────────────────────────
+                    _col_map_l, _col_map_r = st.columns([3, 2])
+
+                    with _col_map_l:
+                        _rm_chart_header("Ranking de ciudades", "Por volumen de leads")
+                        _rank_df = (
+                            _city_agg.sort_values("leads", ascending=False)
+                            .head(15)
+                            .rename(columns={"city_display": "Ciudad", "leads": "Leads", "avg_score": "Score Prom."})
+                            [["Ciudad", "Leads", "Score Prom."]]
+                        )
+                        st.dataframe(_rank_df, use_container_width=True, hide_index=True)
+
+                    with _col_map_r:
+                        _rm_chart_header("Score por ciudad", "Top 10")
+                        _bar_df = _city_agg.sort_values("avg_score", ascending=False).head(10)
+                        _bar_fig = go.Figure(go.Bar(
+                            x=_bar_df["avg_score"],
+                            y=_bar_df["city_display"],
+                            orientation="h",
+                            marker_color="#C4A35A",
+                            marker_line_width=0,
+                            text=_bar_df["avg_score"].apply(lambda v: f"{v:.0f}"),
+                            textposition="outside",
+                            textfont=dict(color="rgba(245,240,230,0.7)", size=11),
+                        ))
+                        _bar_fig.update_layout(
+                            **_rm_layout(height=320),
+                            yaxis=dict(
+                                autorange="reversed",
+                                gridcolor="rgba(245,240,230,0.06)",
+                                tickfont=dict(color="rgba(245,240,230,0.65)", size=11),
+                            ),
+                            xaxis_range=[0, max(_bar_df["avg_score"].max() * 1.2, 10)],
+                        )
+                        st.plotly_chart(_bar_fig, use_container_width=True)
+                else:
+                    st.info("Ciudades detectadas pero sin coordenadas conocidas. Agrega más ciudades al diccionario _CITY_COORDS.")
+            else:
+                st.info("Los leads no tienen campo 'city'. Enriquece los datos para activar el mapa.")
+
     except Exception as _e:
         st.warning(f"Mapa no disponible: {_e}")
+        import traceback; st.code(traceback.format_exc())
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB: 🕸️ Red — Interactive network graph
+# TAB: 🕸️ Red — Network analysis: actor rankings + relationship chart + graph
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_red:
-    st.subheader("🕸️ Grafo de Relaciones")
-    st.caption(
-        "Red de actores, proyectos y eventos detectados. "
-        "Nodos coloreados por perfil · Aristas por tipo de relación."
-    )
-
     try:
+        import plotly.graph_objects as _go_red
         from visualization.network_renderer import render_network_html
         from visualization.export_graph import export_graph
         from network_engine import parse_mentions, build_graph, compute_graph_metrics
 
         _red_df = get_leads_df(config.sqlite_db_path)
 
-        _col_red1, _col_red2, _col_red3 = st.columns([2, 2, 3])
-        with _col_red1:
-            _min_conf = st.slider("Confianza mínima de arista", 0.0, 1.0, 0.4, 0.05)
-        with _col_red2:
-            _max_nodes = st.slider("Máx. nodos visibles", 50, 300, 150, 25)
-        with _col_red3:
-            _export_fmt = st.selectbox("Exportar grafo como", ["gexf", "graphml", "json", "csv"])
+        _rm_chart_header("Análisis de Red de Relaciones", "Influencia & colaboración")
 
-        if not _red_df.empty:
-            # Build leads list from DB
+        if _red_df.empty:
+            st.info("Sin leads todavía. Ejecuta un scrape para construir la red.")
+        else:
+            # Build Lead objects + graph
             _net_leads = []
             for _, _r in _red_df.iterrows():
                 try:
@@ -2437,65 +2581,145 @@ with tab_red:
                     raw_data=_raw,
                 ))
 
-            with st.spinner("Construyendo grafo…"):
+            with st.spinner("Construyendo grafo de relaciones…"):
                 _mentions = []
                 for _l in _net_leads:
                     _mentions.extend(parse_mentions(_l))
                 _graph = build_graph(_net_leads, _mentions)
                 _metrics = compute_graph_metrics(_graph)
 
-            st.caption(
-                f"**{_graph.node_count}** nodos · **{_graph.edge_count}** aristas · "
-                f"**{len(_mentions)}** menciones detectadas"
+            # ── Network signal quality KPIs ───────────────────────────────────
+            _density_pct = (
+                round(_graph.edge_count / max(_graph.node_count, 1) * 100, 1)
+                if _graph.node_count else 0
             )
+            _mention_rate = round(len(_mentions) / max(len(_net_leads), 1) * 100, 1)
+            _rn1, _rn2, _rn3, _rn4 = st.columns(4)
+            _rn1.metric("Actores en red", _graph.node_count)
+            _rn2.metric("Conexiones detectadas", _graph.edge_count)
+            _rn3.metric("Menciones encontradas", len(_mentions))
+            _rn4.metric("Tasa mención/lead", f"{_mention_rate:.1f}%")
 
-            _net_html = render_network_html(_graph, min_confidence=_min_conf, max_nodes=_max_nodes)
-            st.components.v1.html(_net_html, height=600, scrolling=False)
+            st.markdown('<div style="height:.75rem"></div>', unsafe_allow_html=True)
 
-            # ── Legend ────────────────────────────────────────────────────────
-            st.markdown("""
-<small>
-🟣 Specifier &nbsp;|&nbsp; 🔴 Buyer &nbsp;|&nbsp; 🟠 Project actor &nbsp;|&nbsp;
-🔵 Influencer &nbsp;|&nbsp; 🟢 Proyecto &nbsp;|&nbsp; 🟡 Evento &nbsp;|&nbsp;
-⬜ Aspirational
-</small>
-""", unsafe_allow_html=True)
+            # ── Primary view: actor table + relation type chart ────────────────
+            _col_rn_l, _col_rn_r = st.columns([3, 2])
 
-            # ── Export button ─────────────────────────────────────────────────
-            _exp_bytes, _exp_name, _exp_mime = export_graph(_graph, fmt=_export_fmt)
-            if _exp_bytes:
-                st.download_button(
-                    f"⬇️ Descargar grafo ({_export_fmt.upper()})",
-                    _exp_bytes, _exp_name, _exp_mime,
+            with _col_rn_l:
+                _rm_chart_header("Actores por Influencia de Red", "Ranking")
+                if _metrics:
+                    _met_rows = sorted(
+                        _metrics.values(), key=lambda m: m.network_influence_score, reverse=True
+                    )[:20]
+                    _met_data = [{
+                        "Handle": f"@{m.handle}",
+                        "Influencia": round(m.network_influence_score, 1),
+                        "Centralidad": round(m.actor_centrality_score, 1),
+                        "PageRank": round(m.pagerank_score, 1),
+                        "Grado": round(m.degree_score, 1),
+                    } for m in _met_rows]
+                    st.dataframe(
+                        pd.DataFrame(_met_data),
+                        use_container_width=True, hide_index=True,
+                        column_config={
+                            "Influencia": st.column_config.ProgressColumn("Influencia", min_value=0, max_value=100, format="%.1f"),
+                            "Centralidad": st.column_config.ProgressColumn("Centralidad", min_value=0, max_value=100, format="%.1f"),
+                        },
+                    )
+                else:
+                    st.caption("No hay menciones detectadas — la red está vacía. Las bios con @handles activan el análisis.")
+
+            with _col_rn_r:
+                _rm_chart_header("Tipos de Relación", "Distribución")
+                if _mentions:
+                    from collections import Counter as _Counter
+                    _rel_counts = _Counter(m.relation_type for m in _mentions)
+                    _rel_labels = {
+                        "COLLABORATES_WITH": "Colabora con",
+                        "DESIGNED_BY": "Diseñado por",
+                        "WORKS_ON": "Trabaja en",
+                        "MENTIONS": "Menciona",
+                    }
+                    _rl = [_rel_labels.get(k, k) for k in _rel_counts.keys()]
+                    _rv = list(_rel_counts.values())
+                    _rel_fig = _go_red.Figure(_go_red.Bar(
+                        x=_rv, y=_rl, orientation="h",
+                        marker_color=["#C4A35A", "#8B7355", "#6B5B3E", "#4A3F2F"][:len(_rl)],
+                        marker_line_width=0,
+                        text=_rv, textposition="outside",
+                        textfont=dict(color="rgba(245,240,230,0.7)", size=11),
+                    ))
+                    _rel_fig.update_layout(
+                        **_rm_layout(height=260),
+                        yaxis=dict(autorange="reversed", gridcolor="rgba(245,240,230,0.04)",
+                                   tickfont=dict(color="rgba(245,240,230,0.65)", size=11)),
+                        xaxis_range=[0, max(_rv) * 1.3 if _rv else 10],
+                    )
+                    st.plotly_chart(_rel_fig, use_container_width=True)
+
+                    # Influence leaders per relation type
+                    st.markdown(
+                        '<p style="font:500 11px/1 Inter,sans-serif;letter-spacing:.18em;'
+                        'text-transform:uppercase;color:#C4A35A;margin:1rem 0 .4rem">Conexiones más fuertes</p>',
+                        unsafe_allow_html=True,
+                    )
+                    _strong = sorted(_mentions, key=lambda m: m.confidence, reverse=True)[:6]
+                    for _mn in _strong:
+                        _rel_short = _rel_labels.get(_mn.relation_type, _mn.relation_type)
+                        st.markdown(
+                            f'<p style="font:400 12px/1.5 Inter,sans-serif;color:rgba(245,240,230,0.7);margin:.2rem 0">'
+                            f'<span style="color:#C4A35A">@{_mn.source_handle}</span>'
+                            f' <span style="color:rgba(245,240,230,0.35)">→</span> '
+                            f'@{_mn.target_handle}'
+                            f' <span style="color:rgba(245,240,230,0.4);font-size:11px"> {_rel_short} · {_mn.confidence:.0%}</span>'
+                            f'</p>',
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.caption("Sin menciones detectadas. Enriquece las bios con @handles para activar el análisis de relaciones.")
+
+            st.markdown('<hr style="border:none;border-top:1px solid rgba(245,240,230,0.07);margin:1.5rem 0">', unsafe_allow_html=True)
+
+            # ── Secondary: interactive Pyvis graph (on-demand) ─────────────────
+            _col_tog, _col_exp = st.columns([3, 2])
+            with _col_tog:
+                _show_graph = st.checkbox(
+                    "Mostrar grafo interactivo (Pyvis)",
+                    value=False,
+                    help="Visualización fuerza-dirigida. Útil cuando hay ≥ 10 conexiones.",
+                )
+            with _col_exp:
+                _export_fmt = st.selectbox("Exportar grafo como", ["gexf", "graphml", "json", "csv"], label_visibility="collapsed")
+                _exp_bytes, _exp_name, _exp_mime = export_graph(_graph, fmt=_export_fmt)
+                if _exp_bytes:
+                    st.download_button(f"⬇️ Descargar ({_export_fmt.upper()})", _exp_bytes, _exp_name, _exp_mime)
+
+            if _show_graph:
+                _col_gconf1, _col_gconf2 = st.columns(2)
+                with _col_gconf1:
+                    _min_conf = st.slider("Confianza mínima de arista", 0.0, 1.0, 0.3, 0.05)
+                with _col_gconf2:
+                    _max_nodes = st.slider("Máx. nodos visibles", 20, 300, 120, 10)
+
+                with st.spinner("Renderizando grafo…"):
+                    _net_html = render_network_html(_graph, min_confidence=_min_conf, max_nodes=_max_nodes)
+                st.components.v1.html(_net_html, height=560, scrolling=False)
+                st.markdown(
+                    '<p style="font:400 11px/1.6 Inter,sans-serif;color:rgba(245,240,230,0.4);margin:.5rem 0 0">'
+                    '🟣 Specifier &nbsp;·&nbsp; 🔴 Buyer &nbsp;·&nbsp; 🟠 Project actor &nbsp;·&nbsp;'
+                    '🔵 Influencer &nbsp;·&nbsp; 🟢 Proyecto &nbsp;·&nbsp; 🟡 Evento &nbsp;·&nbsp; ⬜ Aspirational'
+                    '</p>',
+                    unsafe_allow_html=True,
                 )
 
-            # ── Top influencers table ─────────────────────────────────────────
-            if _metrics:
-                _met_rows = sorted(_metrics.values(), key=lambda m: m.network_influence_score, reverse=True)[:12]
-                _met_data = [{
-                    "Handle": m.handle,
-                    "Influence": round(m.network_influence_score, 1),
-                    "Centralidad": round(m.actor_centrality_score, 1),
-                    "PageRank": round(m.pagerank_score, 1),
-                } for m in _met_rows]
-                st.markdown("#### Top actores por influencia de red")
-                st.dataframe(pd.DataFrame(_met_data), use_container_width=True, hide_index=True)
-        else:
-            st.info("No hay leads en la base de datos todavía.")
-
     except Exception as _e:
-        st.warning(f"Grafo no disponible: {_e}")
+        st.warning(f"Red no disponible: {_e}")
+        import traceback; st.code(traceback.format_exc())
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB: 🔍 Discovery — Opportunity heatmap + project clusters + AI insights
+# TAB: 🔍 Discovery — Opportunity heatmap + project clusters + BI queries
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_discovery:
-    st.subheader("🔍 Opportunity Discovery")
-    st.caption(
-        "Heatmap de oportunidades · Clusters de proyectos detectados · "
-        "Preguntas de inteligencia comercial."
-    )
-
     try:
         from visualization.opportunity_heatmap import render_opportunity_heatmap
         from project_engine import detect_project, cluster_leads, rank_clusters
@@ -2504,124 +2728,168 @@ with tab_discovery:
 
         _disc_df = get_leads_df(config.sqlite_db_path)
 
-        # ── Heatmap ───────────────────────────────────────────────────────────
-        st.markdown("#### Opportunity Score · Ciudad × Tipo de Lead")
-        if not _disc_df.empty:
-            _hm_fig = render_opportunity_heatmap(_disc_df)
-            st.plotly_chart(_hm_fig, use_container_width=True)
+        _rm_chart_header("Opportunity Discovery", "Inteligencia comercial")
+
+        if _disc_df.empty:
+            st.info("Sin datos. Ejecuta un scrape para activar el discovery.")
         else:
-            st.info("Sin datos de leads para el heatmap.")
+            # ── Quick stats bar ───────────────────────────────────────────────
+            _dq1, _dq2, _dq3, _dq4 = st.columns(4)
+            _spec_count = int((_disc_df["specifier_score"] >= 40).sum()) if "specifier_score" in _disc_df.columns else 0
+            _proj_count = int((_disc_df["project_signal_score"] >= 30).sum()) if "project_signal_score" in _disc_df.columns else 0
+            _evt_count  = int((_disc_df["event_signal_score"] >= 30).sum()) if "event_signal_score" in _disc_df.columns else 0
+            _bp_count   = int((_disc_df["buying_power_score"] >= 40).sum()) if "buying_power_score" in _disc_df.columns else 0
+            _dq1.metric("Especificadores activos", _spec_count)
+            _dq2.metric("Señales de proyecto", _proj_count)
+            _dq3.metric("Señales de evento", _evt_count)
+            _dq4.metric("Alto poder adquisitivo", _bp_count)
 
-        st.divider()
+            st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
 
-        # ── Project clusters ──────────────────────────────────────────────────
-        st.markdown("#### Clusters de Proyectos Detectados")
+            # ── Heatmap + cluster cards (2 columns) ───────────────────────────
+            _col_hm, _col_cl = st.columns([3, 2])
 
-        if not _disc_df.empty:
-            _disc_leads = []
-            for _, _r in _disc_df.iterrows():
-                try:
-                    _raw2 = json.loads(_r.get("raw_data") or "{}")
-                except Exception:
-                    _raw2 = {}
-                _disc_leads.append((Lead(
-                    source_platform=str(_r.get("source_platform") or ""),
-                    search_term=str(_r.get("search_term") or ""),
-                    name=str(_r.get("name") or ""),
-                    social_handle=str(_r.get("social_handle") or ""),
-                    bio=str(_r.get("bio") or ""),
-                    lead_type=str(_r.get("lead_type") or ""),
-                    lead_profile=str(_r.get("lead_profile") or "aspirational"),
-                    city=str(_r.get("city") or ""),
-                    country=str(_r.get("country") or ""),
-                    followers=str(_r.get("followers") or ""),
-                    score=int(_r.get("score") or 0),
-                    raw_data=_raw2,
-                ), _raw2, int(_r.get("id") or 0)))
+            with _col_hm:
+                _rm_chart_header("Opportunity Score · Ciudad × Tipo", "Heatmap")
+                _hm_fig = render_opportunity_heatmap(_disc_df)
+                # Apply RM theme to heatmap
+                _hm_fig.update_layout(
+                    paper_bgcolor="#141210", plot_bgcolor="#0F0E0C",
+                    font=dict(family="Inter, sans-serif", color="#F5F0E6", size=11),
+                    height=340,
+                    margin=dict(l=8, r=8, t=32, b=8),
+                )
+                st.plotly_chart(_hm_fig, use_container_width=True)
 
-            with st.spinner("Detectando proyectos…"):
-                _det_inputs = []
-                for _l, _raw2, _lid in _disc_leads:
-                    _proj_score = float(_raw2.get("project_signal_score", 0))
-                    _det = detect_project(_l, _proj_score)
-                    if _det:
-                        _det_inputs.append((_l, _det, _lid))
+            with _col_cl:
+                _rm_chart_header("Clusters de proyectos detectados", "En tiempo real")
 
-                _clusters = cluster_leads(_det_inputs)
-                for _c in _clusters:
-                    _c_scores = [_r2 for _, _r2, _lid in _disc_leads if _lid in _c.actor_ids]
-                    enrich_cluster_scores(_c, _c_scores)
-                _clusters = rank_clusters(_clusters)
+                # Build detections
+                _disc_leads_list = []
+                for _, _r in _disc_df.iterrows():
+                    try:
+                        _raw2 = json.loads(_r.get("raw_data") or "{}")
+                    except Exception:
+                        _raw2 = {}
+                    _disc_leads_list.append((Lead(
+                        source_platform=str(_r.get("source_platform") or ""),
+                        search_term=str(_r.get("search_term") or ""),
+                        name=str(_r.get("name") or ""),
+                        social_handle=str(_r.get("social_handle") or ""),
+                        bio=str(_r.get("bio") or ""),
+                        lead_type=str(_r.get("lead_type") or ""),
+                        lead_profile=str(_r.get("lead_profile") or "aspirational"),
+                        city=str(_r.get("city") or ""),
+                        country=str(_r.get("country") or ""),
+                        followers=str(_r.get("followers") or ""),
+                        score=int(_r.get("score") or 0),
+                        raw_data=_raw2,
+                    ), _raw2, int(_r.get("id") or 0)))
 
-            if _clusters:
-                st.caption(f"**{len(_clusters)}** cluster(s) detectados — ordenados por oportunidad")
-                for _ci, _c in enumerate(_clusters[:10]):
-                    with st.expander(
-                        f"{'🔴' if _c.status=='active' else '🟣' if _c.status=='emerging' else '⚪'} "
-                        f"{_c.project_type.replace('_',' ').title()} — "
-                        f"{_c.location_city or 'Ubicación desconocida'} "
-                        f"| density={_c.opportunity_density:.2f} | actors={_c.actor_count}",
-                        expanded=_ci == 0,
-                    ):
-                        _ca, _cb, _cc = st.columns(3)
-                        _ca.metric("Status", _c.status.title())
-                        _cb.metric("Budget tier", _c.budget_tier.title())
-                        _cc.metric("Confidence", f"{_c.confidence:.0%}")
+                with st.spinner("Detectando proyectos…"):
+                    _det_inputs = []
+                    for _l, _raw2, _lid in _disc_leads_list:
+                        _proj_score = float(_raw2.get("project_signal_score", 0))
+                        _det = detect_project(_l, _proj_score)
+                        if _det:
+                            _det_inputs.append((_l, _det, _lid))
+                    _clusters = cluster_leads(_det_inputs)
+                    for _c in _clusters:
+                        _c_raw_list = [_r2 for _, _r2, _lid in _disc_leads_list if _lid in _c.actor_ids]
+                        enrich_cluster_scores(_c, _c_raw_list)
+                    _clusters = rank_clusters(_clusters)
 
-                        _cd, _ce, _cf = st.columns(3)
-                        _cd.metric("Avg Specifier", f"{_c.avg_specifier_score:.0f}")
-                        _ce.metric("Avg Buying Power", f"{_c.avg_buying_power_score:.0f}")
-                        _cf.metric("Avg Event Signal", f"{_c.avg_event_signal_score:.0f}")
-
-                        if _c.timeline_hint:
-                            st.caption(f"Timeline: {_c.timeline_hint}")
-                        if _c.actor_handles:
-                            st.caption(f"Actores: {', '.join('@'+h for h in _c.actor_handles[:8])}")
-                        if _c.evidence_texts:
-                            st.caption(f"Evidencia: _{_c.evidence_texts[0][:120]}_")
-
-                        # AI analysis
-                        if st.button(f"🤖 Analizar con IA", key=f"ai_cluster_{_ci}"):
-                            with st.spinner("Analizando con Ollama…"):
-                                _ai_proj = analyse_project_cluster(_c)
-                            st.markdown(f"**{_ai_proj.project_name}** — {_ai_proj.urgency.replace('_',' ').title()}")
-                            st.markdown(f"_{_ai_proj.summary}_")
-                            st.markdown(f"**Approach:** {_ai_proj.recommended_approach}")
-                            st.markdown(f"**Budget:** {_ai_proj.estimated_budget_range}")
-                            if _ai_proj.flags:
-                                st.warning(" · ".join(_ai_proj.flags))
-            else:
-                st.info("No se detectaron clusters de proyectos. Enriquece leads con bio real para activar la detección.")
-
-        st.divider()
-
-        # ── Intelligence queries ──────────────────────────────────────────────
-        st.markdown("#### Preguntas de Inteligencia Comercial")
-        if not _disc_df.empty:
-            _q1, _q2 = st.columns(2)
-            with _q1:
-                st.markdown("**¿Quiénes son los especificadores clave?**")
-                _top_spec = _disc_df[_disc_df.get("specifier_score", 0) >= 40] if "specifier_score" in _disc_df.columns else pd.DataFrame()
-                if not _top_spec.empty:
-                    st.dataframe(
-                        _top_spec[["name","city","lead_type","specifier_score","opportunity_classification"]]
-                        .sort_values("specifier_score", ascending=False).head(8),
-                        use_container_width=True, hide_index=True,
-                    )
+                if _clusters:
+                    st.caption(f"**{len(_clusters)}** cluster(s) · ordenados por densidad de oportunidad")
+                    for _ci, _c in enumerate(_clusters[:8]):
+                        _status_icon = "🔴" if _c.status == "active" else "🟣" if _c.status == "emerging" else "⚪"
+                        _c_label = (
+                            f"{_status_icon} **{_c.project_type.replace('_',' ').title()}**"
+                            f" — {_c.location_city or '?'} · {_c.confidence:.0%} conf."
+                        )
+                        with st.expander(_c_label, expanded=_ci == 0):
+                            _ca, _cb = st.columns(2)
+                            _ca.metric("Status", _c.status.title())
+                            _cb.metric("Budget", _c.budget_tier.title())
+                            _cc, _cd = st.columns(2)
+                            _cc.metric("Density", f"{_c.opportunity_density:.2f}")
+                            _cd.metric("Actores", _c.actor_count)
+                            if _c.timeline_hint:
+                                st.caption(f"Timeline: {_c.timeline_hint}")
+                            if _c.actor_handles:
+                                st.caption(", ".join(f"@{h}" for h in _c.actor_handles[:5]))
+                            if _c.evidence_texts:
+                                st.caption(f"_{_c.evidence_texts[0][:100]}_")
+                            if st.button("🤖 Analizar con IA", key=f"ai_cluster_{_ci}"):
+                                with st.spinner("Analizando con Ollama…"):
+                                    _ai_proj = analyse_project_cluster(_c)
+                                st.markdown(f"**{_ai_proj.project_name}** — {_ai_proj.urgency.replace('_',' ').title()}")
+                                st.markdown(f"_{_ai_proj.summary}_")
+                                st.caption(f"Budget: {_ai_proj.estimated_budget_range} · Approach: {_ai_proj.recommended_approach}")
+                                if _ai_proj.flags:
+                                    st.warning(" · ".join(_ai_proj.flags))
                 else:
-                    st.caption("Enriquece leads para ver especificadores.")
+                    st.caption("Sin clusters detectados. Las bios con señales de proyecto activan la detección.")
 
-            with _q2:
-                st.markdown("**¿Quiénes tienen señal de proyecto activo?**")
-                _top_proj = _disc_df[_disc_df.get("project_signal_score", 0) >= 40] if "project_signal_score" in _disc_df.columns else pd.DataFrame()
-                if not _top_proj.empty:
-                    st.dataframe(
-                        _top_proj[["name","city","lead_type","project_signal_score","opportunity_classification"]]
-                        .sort_values("project_signal_score", ascending=False).head(8),
-                        use_container_width=True, hide_index=True,
-                    )
+            st.markdown('<hr style="border:none;border-top:1px solid rgba(245,240,230,0.07);margin:1.5rem 0">', unsafe_allow_html=True)
+
+            # ── Intelligence queries (3-col) ──────────────────────────────────
+            _rm_chart_header("Preguntas de Inteligencia Comercial", "Quién contactar primero")
+            _qi1, _qi2, _qi3 = st.columns(3)
+
+            with _qi1:
+                st.markdown(
+                    '<p style="font:500 12px/1.5 Inter,sans-serif;color:#C4A35A;margin:0 0 .5rem">¿Especificadores clave?</p>',
+                    unsafe_allow_html=True,
+                )
+                if "specifier_score" in _disc_df.columns:
+                    _top_spec = _disc_df[_disc_df["specifier_score"] >= 40].copy()
+                    if not _top_spec.empty:
+                        _cols_spec = [c for c in ["name", "city", "lead_type", "specifier_score"] if c in _top_spec.columns]
+                        st.dataframe(
+                            _top_spec[_cols_spec].sort_values("specifier_score", ascending=False).head(8),
+                            use_container_width=True, hide_index=True,
+                        )
+                    else:
+                        st.caption("Enriquece leads para ver especificadores.")
                 else:
-                    st.caption("Enriquece leads para ver actores de proyecto.")
+                    st.caption("Requiere enriquecimiento de leads.")
+
+            with _qi2:
+                st.markdown(
+                    '<p style="font:500 12px/1.5 Inter,sans-serif;color:#C4A35A;margin:0 0 .5rem">¿Actores con proyecto activo?</p>',
+                    unsafe_allow_html=True,
+                )
+                if "project_signal_score" in _disc_df.columns:
+                    _top_proj = _disc_df[_disc_df["project_signal_score"] >= 30].copy()
+                    if not _top_proj.empty:
+                        _cols_proj = [c for c in ["name", "city", "lead_type", "project_signal_score"] if c in _top_proj.columns]
+                        st.dataframe(
+                            _top_proj[_cols_proj].sort_values("project_signal_score", ascending=False).head(8),
+                            use_container_width=True, hide_index=True,
+                        )
+                    else:
+                        st.caption("Enriquece leads para ver actores de proyecto.")
+                else:
+                    st.caption("Requiere enriquecimiento de leads.")
+
+            with _qi3:
+                st.markdown(
+                    '<p style="font:500 12px/1.5 Inter,sans-serif;color:#C4A35A;margin:0 0 .5rem">¿Alto poder adquisitivo?</p>',
+                    unsafe_allow_html=True,
+                )
+                if "buying_power_score" in _disc_df.columns:
+                    _top_bp = _disc_df[_disc_df["buying_power_score"] >= 40].copy()
+                    if not _top_bp.empty:
+                        _cols_bp = [c for c in ["name", "city", "lead_type", "buying_power_score", "opportunity_classification"] if c in _top_bp.columns]
+                        st.dataframe(
+                            _top_bp[_cols_bp].sort_values("buying_power_score", ascending=False).head(8),
+                            use_container_width=True, hide_index=True,
+                        )
+                    else:
+                        st.caption("Enriquece leads para ver poder adquisitivo.")
+                else:
+                    st.caption("Requiere enriquecimiento de leads.")
 
     except Exception as _e:
         st.warning(f"Discovery no disponible: {_e}")
