@@ -2587,10 +2587,6 @@ with tab_red:
                 _metrics = compute_graph_metrics(_graph)
 
             # ── Network signal quality KPIs ───────────────────────────────────
-            _density_pct = (
-                round(_graph.edge_count / max(_graph.node_count, 1) * 100, 1)
-                if _graph.node_count else 0
-            )
             _mention_rate = round(len(_mentions) / max(len(_net_leads), 1) * 100, 1)
             _rn1, _rn2, _rn3, _rn4 = st.columns(4)
             _rn1.metric("Actores en red", _graph.node_count)
@@ -2598,107 +2594,116 @@ with tab_red:
             _rn3.metric("Menciones encontradas", len(_mentions))
             _rn4.metric("Tasa mención/lead", f"{_mention_rate:.1f}%")
 
+            st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
+
+            # ── PRIMARY: Geographic network map (full-width, prominent) ────────
+            import plotly.graph_objects as _go_geo
+
+            # Collect geocoded lead positions
+            _geo_nodes: list[dict] = []
+            for _, _gr in _red_df.iterrows():
+                _c = str(_gr.get("city") or "").lower().strip()
+                _coords = _CITY_COORDS.get(_c)
+                if not _coords:
+                    continue
+                _geo_nodes.append({
+                    "handle": str(_gr.get("social_handle") or ""),
+                    "name": str(_gr.get("name") or _gr.get("social_handle") or ""),
+                    "lat": _coords[0], "lon": _coords[1],
+                    "score": int(_gr.get("score") or 0),
+                    "lead_type": str(_gr.get("lead_type") or ""),
+                    "city": str(_gr.get("city") or ""),
+                })
+
+            _geo_fig = _go_geo.Figure()
+            _handle_to_geo = {n["handle"].lower(): n for n in _geo_nodes}
+
+            # Draw connection lines between geocoded connected leads
+            _geo_line_count = 0
+            for _mn in _mentions:
+                _src_geo = _handle_to_geo.get(_mn.source_handle.lower())
+                _dst_geo = _handle_to_geo.get(_mn.target_handle.lower())
+                if not _src_geo or not _dst_geo:
+                    continue
+                _line_color = {
+                    "COLLABORATES_WITH": "#6C63FF",
+                    "DESIGNED_BY": "#00B894",
+                    "WORKS_ON": "#FF9F43",
+                }.get(_mn.relation_type, "#C4A35A")
+                _geo_fig.add_trace(_go_geo.Scattergeo(
+                    lat=[_src_geo["lat"], _dst_geo["lat"], None],
+                    lon=[_src_geo["lon"], _dst_geo["lon"], None],
+                    mode="lines",
+                    line=dict(width=2, color=_line_color),
+                    opacity=0.75,
+                    showlegend=False,
+                    hoverinfo="skip",
+                ))
+                _geo_line_count += 1
+
+            # Draw lead nodes
+            if _geo_nodes:
+                _geo_df_plot = pd.DataFrame(_geo_nodes)
+                _geo_fig.add_trace(_go_geo.Scattergeo(
+                    lat=_geo_df_plot["lat"],
+                    lon=_geo_df_plot["lon"],
+                    mode="markers",
+                    marker=dict(
+                        size=_geo_df_plot["score"].apply(lambda s: max(10, min(32, s // 3))),
+                        color="#C4A35A",
+                        line=dict(width=1, color="rgba(245,240,230,0.3)"),
+                        opacity=0.90,
+                    ),
+                    text=_geo_df_plot.apply(
+                        lambda r: f"@{r['handle']}<br>{r['city']} · {r['lead_type']}<br>Score: {r['score']}", axis=1
+                    ),
+                    hovertemplate="%{text}<extra></extra>",
+                    name="Leads",
+                    showlegend=False,
+                ))
+
+            _geo_fig.update_layout(
+                **_rm_layout(height=520),
+                geo=dict(
+                    bgcolor="#0F0E0C", landcolor="#1C1A17",
+                    oceancolor="#0A0908", lakecolor="#0A0908",
+                    coastlinecolor="rgba(245,240,230,0.15)",
+                    countrycolor="rgba(245,240,230,0.08)",
+                    showland=True, showocean=True, showcountries=True,
+                    showcoastlines=True, projection_type="natural earth",
+                    showframe=False,
+                ),
+            )
+            _geo_fig.update_layout(margin=dict(l=0, r=0, t=8, b=0))
+            st.plotly_chart(_geo_fig, use_container_width=True)
+
+            # Contextual caption under geo map
+            if not _geo_nodes:
+                st.caption("Ningún lead tiene ciudad conocida. Enriquece los leads con ciudad para verlos en el mapa.")
+            elif _geo_line_count == 0:
+                st.caption(
+                    f"{len(_geo_nodes)} leads mapeados. "
+                    "Las líneas de conexión aparecen cuando dos leads conectados tienen ciudad conocida — "
+                    "enriquece bios con @handles para activar los vínculos."
+                )
+            else:
+                st.caption(f"{len(_geo_nodes)} leads · {_geo_line_count} conexiones georeferenciadas")
+
             if _graph.edge_count == 0:
                 st.info(
-                    "Todos los leads están en el grafo como nodos individuales. "
-                    "Las aristas (conexiones) se crean cuando las bios contienen @menciones de otros leads. "
-                    "Con 0 menciones la red aparece como puntos aislados — es correcto. "
-                    "Para activar conexiones: enriquece leads con bios reales que mencionen colaboradores."
+                    "0 conexiones detectadas en la red. "
+                    "Las aristas se crean cuando las bios contienen @menciones de otros leads. "
+                    "Enriquece los leads con bios reales para activar el análisis relacional."
                 )
 
-            st.markdown('<div style="height:.75rem"></div>', unsafe_allow_html=True)
+            st.markdown('<hr style="border:none;border-top:1px solid rgba(245,240,230,0.07);margin:1.2rem 0">', unsafe_allow_html=True)
 
-            # ── Geographic network map ─────────────────────────────────────────
-            if _graph.edge_count > 0 or not _red_df.empty:
-                import plotly.graph_objects as _go_geo
-                _rm_chart_header("Mapa geográfico de la red", "Dónde están y cómo se conectan")
-
-                # Collect geocoded lead positions
-                _geo_nodes: list[dict] = []
-                for _, _gr in _red_df.iterrows():
-                    _c = str(_gr.get("city") or "").lower().strip()
-                    _coords = _CITY_COORDS.get(_c)
-                    if not _coords:
-                        continue
-                    _geo_nodes.append({
-                        "handle": str(_gr.get("social_handle") or ""),
-                        "name": str(_gr.get("name") or _gr.get("social_handle") or ""),
-                        "lat": _coords[0], "lon": _coords[1],
-                        "score": int(_gr.get("score") or 0),
-                        "lead_type": str(_gr.get("lead_type") or ""),
-                        "city": str(_gr.get("city") or ""),
-                    })
-
-                _geo_fig = _go_geo.Figure()
-
-                # Draw connection lines between geocoded connected leads
-                _handle_to_geo = {n["handle"].lower(): n for n in _geo_nodes}
-                for _mn in _mentions:
-                    _src_geo = _handle_to_geo.get(_mn.source_handle.lower())
-                    _dst_geo = _handle_to_geo.get(_mn.target_handle.lower())
-                    if not _src_geo or not _dst_geo:
-                        continue
-                    _line_color = {
-                        "COLLABORATES_WITH": "#6C63FF",
-                        "DESIGNED_BY": "#00B894",
-                        "WORKS_ON": "#FF9F43",
-                    }.get(_mn.relation_type, "#C4A35A")
-                    _geo_fig.add_trace(_go_geo.Scattergeo(
-                        lat=[_src_geo["lat"], _dst_geo["lat"], None],
-                        lon=[_src_geo["lon"], _dst_geo["lon"], None],
-                        mode="lines",
-                        line=dict(width=2, color=_line_color),
-                        opacity=0.75,
-                        showlegend=False,
-                        hoverinfo="skip",
-                    ))
-
-                # Draw lead nodes
-                if _geo_nodes:
-                    _geo_df_plot = pd.DataFrame(_geo_nodes)
-                    _geo_fig.add_trace(_go_geo.Scattergeo(
-                        lat=_geo_df_plot["lat"],
-                        lon=_geo_df_plot["lon"],
-                        mode="markers",
-                        marker=dict(
-                            size=_geo_df_plot["score"].apply(lambda s: max(8, min(28, s // 4))),
-                            color="#C4A35A",
-                            line=dict(width=1, color="rgba(245,240,230,0.3)"),
-                            opacity=0.85,
-                        ),
-                        text=_geo_df_plot.apply(
-                            lambda r: f"@{r['handle']}<br>{r['city']} · {r['lead_type']}<br>Score: {r['score']}", axis=1
-                        ),
-                        hovertemplate="%{text}<extra></extra>",
-                        name="Leads",
-                        showlegend=False,
-                    ))
-
-                _geo_fig.update_layout(
-                    **_rm_layout(height=400),
-                    geo=dict(
-                        bgcolor="#0F0E0C", landcolor="#1C1A17",
-                        oceancolor="#0F0E0C", lakecolor="#0F0E0C",
-                        coastlinecolor="rgba(245,240,230,0.12)",
-                        countrycolor="rgba(245,240,230,0.07)",
-                        showland=True, showocean=True, showcountries=True,
-                        showcoastlines=True, projection_type="natural earth",
-                    ),
-                )
-                _geo_fig.update_layout(margin=dict(l=0, r=0, t=20, b=0))
-                st.plotly_chart(_geo_fig, use_container_width=True)
-
-                if _graph.edge_count == 0 and not any(
-                    _handle_to_geo.get(_mn.source_handle.lower()) and _handle_to_geo.get(_mn.target_handle.lower())
-                    for _mn in _mentions
-                ):
-                    st.caption("Leads mapeados sin conexiones georeferenciadas todavía. Las líneas aparecerán cuando dos leads conectados tengan ciudad conocida.")
-
-            # ── Primary view: actor table + relation type chart ────────────────
+            # ── Secondary: actor table + relation type chart ───────────────────
+            _rm_chart_header("Análisis de Actores", "Influencia & relaciones")
             _col_rn_l, _col_rn_r = st.columns([3, 2])
 
             with _col_rn_l:
-                _rm_chart_header("Actores por Influencia de Red", "Ranking")
+                _rm_chart_header("Actores por Influencia", "Ranking")
                 if _metrics:
                     _met_rows = sorted(
                         _metrics.values(), key=lambda m: m.network_influence_score, reverse=True
@@ -2773,9 +2778,10 @@ with tab_red:
                 else:
                     st.caption("Sin menciones detectadas. Enriquece las bios con @handles para activar el análisis de relaciones.")
 
-            st.markdown('<hr style="border:none;border-top:1px solid rgba(245,240,230,0.07);margin:1.5rem 0">', unsafe_allow_html=True)
+            st.markdown('<hr style="border:none;border-top:1px solid rgba(245,240,230,0.07);margin:1.2rem 0">', unsafe_allow_html=True)
 
-            # ── Secondary: interactive Pyvis graph (on-demand) ─────────────────
+            # ── Tertiary: interactive Pyvis force-directed graph (on-demand) ───
+            _rm_chart_header("Grafo fuerza-dirigida", "Vista topológica interactiva")
             _col_tog, _col_exp = st.columns([3, 2])
             with _col_tog:
                 _show_graph = st.checkbox(
