@@ -248,7 +248,6 @@ def render_network_html(
                 label=_label,
                 color=_color,
                 size=(_node_size(attrs) + 10) if _is_conn else _node_size(attrs),
-                title=_node_title(node_id, attrs),
                 font={"size": 12 if _is_conn else 10, "color": "#F5F0E6" if _is_conn else "#9A9A9A"},
                 borderWidth=3 if _is_conn else 1,
                 borderWidthSelected=5,
@@ -273,7 +272,6 @@ def render_network_html(
                 color={"color": style["color"], "opacity": 0.9, "highlight": "#F5F0E6"},
                 width=max(style["width"], 3),
                 dashes=style["dashes"],
-                title=tooltip,
                 arrows={"to": {"enabled": True, "scaleFactor": 0.8}},
                 smooth={"type": "curvedCW", "roundness": 0.2},
             )
@@ -281,34 +279,95 @@ def render_network_html(
         with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w") as f:
             tmp_path = f.name
 
+        # Build tooltip data map (node_id → HTML string)
+        import json as _json
+        _tip_map: dict[str, str] = {}
+        for _nid, _nattrs in G.nodes(data=True):
+            _tip_map[str(_nid)] = _node_title(_nid, _nattrs)
+        _tip_json = _json.dumps(_tip_map)
+
+        # Build edge tooltip map (src__dst → HTML string)
+        _edge_tip_map: dict[str, str] = {}
+        for _src, _dst, _edata in G.edges(data=True):
+            _conf = _edata.get("confidence", 0.5)
+            _rel  = _edata.get("relation_type", "MENTIONED_WITH")
+            _ev   = _edata.get("evidence", "")
+            _etip = (
+                f"<b>{_rel.replace('_', ' ')}</b><br>"
+                f"confidence: {_conf:.2f}  platform: {_edata.get('platform','')}"
+                + (f"<br><i style='color:#ccc;font-size:11px'>{_ev[:80]}…</i>" if _ev else "")
+            )
+            _edge_tip_map[f"{_src}__{_dst}"] = _etip
+        _etip_json = _json.dumps(_edge_tip_map)
+
         net.save_graph(tmp_path)
         html = Path(tmp_path).read_text(encoding="utf-8")
         Path(tmp_path).unlink(missing_ok=True)
 
-        # ── Post-process: dark RM theme + allow HTML in vis-network tooltips ──
+        # ── Expose network to window scope so our JS can hook events ──────────
+        html = html.replace(
+            "var network = new vis.Network(",
+            "window.network = new vis.Network(",
+            1,
+        )
+
+        # ── Dark RM base styles (hide default vis tooltip) ────────────────────
         _style_inject = """
 <style>
   body { background:#0F0E0C !important; margin:0; padding:0; }
-  div.vis-tooltip {
-    background:#141210 !important; color:#F5F0E6 !important;
-    border:1px solid rgba(196,163,90,0.35) !important;
-    border-radius:4px !important; padding:8px 10px !important;
-    font-family:Inter,sans-serif !important; font-size:12px !important;
-    max-width:280px; line-height:1.5;
+  div.vis-tooltip { display:none !important; }  /* replaced by custom overlay */
+  #rm-tip {
+    display:none; position:fixed; z-index:9999; pointer-events:none;
+    background:#141210; color:#F5F0E6;
+    border:1px solid rgba(196,163,90,0.40);
+    border-radius:4px; padding:9px 12px;
+    font:12px/1.55 Inter,sans-serif;
+    max-width:290px; box-shadow:0 6px 24px rgba(0,0,0,.55);
   }
-  div.vis-tooltip a { color:#C4A35A !important; }
+  #rm-tip b  { color:#F5F0E6; }
+  #rm-tip a  { color:#C4A35A; text-decoration:underline; pointer-events:all; }
+  #rm-tip i  { color:#aaa; }
+  #rm-tip span { }
 </style>"""
-        _js_inject = """
+
+        # ── Custom tooltip overlay using network hover events ─────────────────
+        _js_inject = f"""
+<div id="rm-tip"></div>
 <script>
-(function patchVis() {
-  // Disable vis-network HTML sanitization so tooltips render as HTML
-  if (window.vis && window.vis.util && typeof window.vis.util.sanitizeHTML === 'function') {
-    window.vis.util.sanitizeHTML = function(s) { return s; };
-  } else {
-    setTimeout(patchVis, 80);
-  }
-})();
+var RM_TIPS  = {_tip_json};
+var RM_ETIPS = {_etip_json};
+(function waitNet() {{
+  var net = window.network;
+  var tip = document.getElementById('rm-tip');
+  if (!net || !tip) {{ setTimeout(waitNet, 120); return; }}
+
+  document.addEventListener('mousemove', function(e) {{
+    if (tip.style.display === 'block') {{
+      var x = e.clientX + 14, y = e.clientY + 14;
+      if (x + 300 > window.innerWidth)  x = e.clientX - 305;
+      if (y + 240 > window.innerHeight) y = e.clientY - 180;
+      tip.style.left = x + 'px'; tip.style.top = y + 'px';
+    }}
+  }});
+
+  net.on('hoverNode', function(p) {{
+    var html = RM_TIPS[String(p.node)];
+    if (html) {{ tip.innerHTML = html; tip.style.display = 'block'; }}
+  }});
+  net.on('blurNode',  function() {{ tip.style.display = 'none'; }});
+
+  net.on('hoverEdge', function(p) {{
+    var key = null;
+    net.body.data.edges.forEach(function(e) {{
+      if (e.id === p.edge) key = String(e.from) + '__' + String(e.to);
+    }});
+    var html = key && RM_ETIPS[key];
+    if (html) {{ tip.innerHTML = html; tip.style.display = 'block'; }}
+  }});
+  net.on('blurEdge',  function() {{ tip.style.display = 'none'; }});
+}})();
 </script>"""
+
         html = html.replace("</head>", _style_inject + "\n</head>", 1)
         html = html.replace("</body>", _js_inject + "\n</body>", 1)
         return html
