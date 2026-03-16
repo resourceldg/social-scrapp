@@ -260,13 +260,6 @@ def render_network_html(
                 continue
             rel = edata.get("relation_type", "MENTIONED_WITH")
             style = _EDGE_STYLES.get(rel, _DEFAULT_EDGE_STYLE)
-            evidence = edata.get("evidence", "")
-            tooltip = (
-                f"<b>{rel.replace('_', ' ')}</b><br>"
-                f"confidence: {conf:.2f}<br>"
-                f"platform: {edata.get('platform', '')}"
-                + (f"<br><i style='color:#ccc;font-size:11px'>{evidence[:80]}…</i>" if evidence else "")
-            )
             net.add_edge(
                 src, dst,
                 color={"color": style["color"], "opacity": 0.9, "highlight": "#F5F0E6"},
@@ -305,8 +298,9 @@ def render_network_html(
         Path(tmp_path).unlink(missing_ok=True)
 
         # ── Expose network to window scope so our JS can hook events ──────────
+        # Pyvis generates:  network = new vis.Network(  (no 'var')
         html = html.replace(
-            "var network = new vis.Network(",
+            "network = new vis.Network(",
             "window.network = new vis.Network(",
             1,
         )
