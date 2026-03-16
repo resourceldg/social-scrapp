@@ -12,13 +12,9 @@ from config import AppConfig
 from models import Lead
 from parsers.lead_parser import soup_from_html
 from utils.classifiers import classify_lead, extract_interest_signals
-from utils.helpers import detect_location, extract_emails, extract_phones, extract_website, random_delay, save_debug_html
+from utils.helpers import detect_location, extract_emails, extract_phones, extract_website, save_debug_html, scrape_with_retry, scroll_page
 
 logger = logging.getLogger(__name__)
-
-REDDIT_SELECTORS = {
-    "community_or_user_links": ["a[href^='/r/']", "a[href^='/user/']"],
-}
 
 
 class RedditScraper:
@@ -29,36 +25,61 @@ class RedditScraper:
         leads: list[Lead] = []
         for keyword in config.reddit_keywords:
             try:
-                url = f"{self.base_url}/search/?q={quote(keyword)}"
-                logger.info("Reddit keyword=%s", keyword)
-                driver.get(url)
-                WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-                random_delay(config.min_delay, config.max_delay)
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.5);")
-                random_delay(config.min_delay, config.max_delay)
-                save_debug_html(driver, config.debug_html_dir, f"reddit_{quote(keyword)}.html", config.save_debug_html)
-
-                soup = soup_from_html(driver.page_source)
-                text = soup.get_text(" ", strip=True)
-                links = []
-                for selector in REDDIT_SELECTORS["community_or_user_links"]:
-                    links.extend([a.get("href", "") for a in soup.select(selector)])
-
-                for href in links[: config.max_results_per_query]:
-                    if href.startswith("/"):
-                        href = f"{self.base_url}{href}"
-                    leads.append(self._lead_from_candidate(keyword, href, text))
-                    if len(leads) >= config.max_profiles_per_platform:
-                        return leads
+                new_leads = scrape_with_retry(
+                    lambda kw=keyword: self._scrape_keyword(driver, config, kw, leads),
+                    max_retries=config.network_retries,
+                    base_delay=5.0,
+                    label=f"reddit/{keyword}",
+                )
+                leads.extend(new_leads)
+                if len(leads) >= config.max_profiles_per_platform:
+                    return leads[:config.max_profiles_per_platform]
             except Exception as exc:
                 logger.exception("Reddit error for %s: %s", keyword, exc)
         return leads
+
+    def _scrape_keyword(self, driver: WebDriver, config: AppConfig, keyword: str, existing: list[Lead]) -> list[Lead]:
+        url = f"{self.base_url}/search/?q={quote(keyword)}&type=sr,user"
+        logger.info("Reddit keyword=%s", keyword)
+        driver.get(url)
+        WebDriverWait(driver, config.page_load_timeout).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+        scroll_page(driver, scrolls=config.scrolls_override, min_delay=config.min_delay, max_delay=config.max_delay)
+        save_debug_html(driver, config.debug_html_dir, f"reddit_{quote(keyword)}.html", config.save_debug_html)
+
+        soup = soup_from_html(driver.page_source)
+        seen: set[str] = set()
+        new_leads: list[Lead] = []
+        remaining = config.max_profiles_per_platform - len(existing)
+
+        # Prefer /r/ communities first, then /user/ profiles
+        for a in soup.select("a[href^='/r/'], a[href^='/user/']"):
+            href = a.get("href", "").rstrip("/")
+            parts = href.split("/")
+            if len(parts) < 3:
+                continue
+            canonical = "/" + "/".join(parts[1:3])
+            full_url = f"{self.base_url}{canonical}"
+            if full_url in seen:
+                continue
+            seen.add(full_url)
+
+            card = a.find_parent(["div", "li", "article"]) or a.parent
+            card_text = card.get_text(" ", strip=True)[:1000] if card else ""
+
+            new_leads.append(self._lead_from_candidate(keyword, full_url, card_text))
+            if len(new_leads) >= remaining:
+                break
+
+        return new_leads
 
     def _lead_from_candidate(self, keyword: str, url: str, text: str) -> Lead:
         city, country = detect_location(text)
         emails = extract_emails(text)
         phones = extract_phones(text)
         handle = url.rstrip("/").split("/")[-1]
+        is_user = "/user/" in url
         return Lead(
             source_platform=self.platform,
             search_term=keyword,
@@ -71,7 +92,7 @@ class RedditScraper:
             city=city,
             country=country,
             bio=text[:500],
-            category="subreddit_or_user",
+            category="reddit_user" if is_user else "subreddit",
             lead_type=classify_lead(text),
             interest_signals=extract_interest_signals(text),
             raw_data={"text_sample": text[:1000]},

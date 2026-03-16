@@ -1,0 +1,31 @@
+# Environment
+.env
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+models/__pycache__/
+parsers/__pycache__/
+scrapers/__pycache__/
+utils/__pycache__/
+
+# Runtime / output
+output/leads.db
+output/leads.db.bak
+output/route_stats.db
+output/metrics.json
+output/scraper.log
+output/behance_session.json
+output/instagram_session.json
+logs/
+debug_html/
+feedback/
+
+# Process locks / pids
+.scrape.lock
+.dashboard.pid
+
+# GitNexus index
+.gitnexus/

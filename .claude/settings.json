@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//home/zen/Documents/social-scrapp/NR==1 { print \"\"\"\"\"\"\"\"social-scrapp/\"\"\"\"\"\"\"\"; next } { gsub\\(/^\\\\.\\\\/,\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\\); print \"\"\"\"\"\"\"\"├── \"\"\"\"\"\"\"\" $0 \"\"\"\"\"\"\"\"/**)",
+      "Bash(source .venv/bin/activate)",
+      "Bash(python -m pytest tests/ -x -q --tb=short)",
+      "Bash(pip install:*)",
+      "Bash(grep -n \"scroll_page\\(driver, scrolls=\" /home/zen/Documents/social-scrapp/scrapers/*.py)",
+      "Bash(python -c \":*)",
+      "Bash(sed -i 's/^import subprocess$/import subprocess\\\\nimport sys/' dashboard.py)",
+      "Bash(sed -i 's/\\\\[\"\"python3\"\", \"\"main.py\"\"\\\\]/[sys.executable, \"\"main.py\"\"]/' dashboard.py)",
+      "Read(//home/zen/.config/google-chrome/Default/**)",
+      "Read(//home/zen/.config/chromium/**)",
+      "Bash(.venv/bin/python -c \":*)"
+    ]
+  }
+}

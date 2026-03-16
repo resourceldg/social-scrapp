@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from urllib.parse import quote
+import re
+from urllib.parse import quote, urlparse
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.remote.webdriver import WebDriver
@@ -12,13 +13,21 @@ from config import AppConfig
 from models import Lead
 from parsers.lead_parser import soup_from_html
 from utils.classifiers import classify_lead, extract_interest_signals
-from utils.helpers import detect_location, extract_emails, extract_phones, extract_website, random_delay, save_debug_html
+from utils.helpers import detect_location, extract_emails, extract_follower_count, extract_phones, extract_website, save_debug_html, scrape_with_retry, scroll_page
 
 logger = logging.getLogger(__name__)
 
-PINTEREST_SELECTORS = {
-    "result_links": ["a[href*='/']"],
-}
+# Pinterest user profile paths are /username/ (one segment, no /pin/ /board/ etc.)
+_PIN_SKIP_PATHS = ("/pin/", "/search/", "/explore/", "/ideas/", "/today/", "/login/")
+_PIN_HANDLE_RE = re.compile(r"^/([a-zA-Z0-9_.-]{3,50})/?$")
+
+
+def _is_user_href(href: str) -> bool:
+    if not href or not href.startswith("/"):
+        return False
+    if any(href.startswith(skip) for skip in _PIN_SKIP_PATHS):
+        return False
+    return bool(_PIN_HANDLE_RE.match(href))
 
 
 class PinterestScraper:
@@ -29,36 +38,58 @@ class PinterestScraper:
         leads: list[Lead] = []
         for keyword in config.pinterest_keywords:
             try:
-                url = f"{self.base_url}/search/users/?q={quote(keyword)}"
-                logger.info("Pinterest keyword=%s", keyword)
-                driver.get(url)
-                WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-                random_delay(config.min_delay, config.max_delay)
-                save_debug_html(driver, config.debug_html_dir, f"pinterest_{quote(keyword)}.html", config.save_debug_html)
-
-                soup = soup_from_html(driver.page_source)
-                text = soup.get_text(" ", strip=True)
-                links = []
-                for selector in PINTEREST_SELECTORS["result_links"]:
-                    links.extend([a.get("href", "") for a in soup.select(selector)])
-
-                for href in links[: config.max_results_per_query]:
-                    if href.startswith("/"):
-                        href = f"{self.base_url}{href}"
-                    if "pinterest.com" not in href:
-                        continue
-                    leads.append(self._lead_from_candidate(keyword, href, text))
-                    if len(leads) >= config.max_profiles_per_platform:
-                        return leads
+                new_leads = scrape_with_retry(
+                    lambda kw=keyword: self._scrape_keyword(driver, config, kw, leads),
+                    max_retries=config.network_retries,
+                    base_delay=5.0,
+                    label=f"pinterest/{keyword}",
+                )
+                leads.extend(new_leads)
+                if len(leads) >= config.max_profiles_per_platform:
+                    return leads[:config.max_profiles_per_platform]
             except Exception as exc:
                 logger.exception("Pinterest error for %s: %s", keyword, exc)
         return leads
+
+    def _scrape_keyword(self, driver: WebDriver, config: AppConfig, keyword: str, existing: list[Lead]) -> list[Lead]:
+        url = f"{self.base_url}/search/users/?q={quote(keyword)}"
+        logger.info("Pinterest keyword=%s", keyword)
+        driver.get(url)
+        WebDriverWait(driver, config.page_load_timeout).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+        scroll_page(driver, scrolls=config.scrolls_override, min_delay=config.min_delay, max_delay=config.max_delay)
+        save_debug_html(driver, config.debug_html_dir, f"pinterest_{quote(keyword)}.html", config.save_debug_html)
+
+        soup = soup_from_html(driver.page_source)
+        seen: set[str] = set()
+        new_leads: list[Lead] = []
+        remaining = config.max_profiles_per_platform - len(existing)
+
+        for a in soup.select("a[href]"):
+            href = a.get("href", "")
+            if not _is_user_href(href):
+                continue
+            clean_href = href.rstrip("/")
+            if clean_href in seen:
+                continue
+            seen.add(clean_href)
+
+            profile_url = f"{self.base_url}{clean_href}"
+            card = a.find_parent(["div", "li", "article"]) or a.parent
+            card_text = card.get_text(" ", strip=True)[:1000] if card else ""
+
+            new_leads.append(self._lead_from_candidate(keyword, profile_url, card_text))
+            if len(new_leads) >= remaining:
+                break
+
+        return new_leads
 
     def _lead_from_candidate(self, keyword: str, url: str, text: str) -> Lead:
         city, country = detect_location(text)
         emails = extract_emails(text)
         phones = extract_phones(text)
-        handle = url.rstrip("/").split("/")[-1]
+        handle = urlparse(url).path.rstrip("/").split("/")[-1]
         return Lead(
             source_platform=self.platform,
             search_term=keyword,
@@ -74,5 +105,6 @@ class PinterestScraper:
             category="profile_or_board",
             lead_type=classify_lead(text),
             interest_signals=extract_interest_signals(text),
+            followers=extract_follower_count(text),
             raw_data={"text_sample": text[:1000]},
         )

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 from models import Lead
+from utils.helpers import normalize_url
 
 
 def _merge(existing: Lead, incoming: Lead) -> Lead:
@@ -26,8 +27,10 @@ def dedupe_leads(leads: List[Lead]) -> List[Lead]:
     output: List[Lead] = []
 
     for lead in leads:
+        # Normalize URL to strip query params/fragments before using as key
+        norm_url = normalize_url(lead.profile_url) if lead.profile_url else ""
         keys = [
-            f"url:{lead.profile_url.lower()}" if lead.profile_url else "",
+            f"url:{norm_url}" if norm_url else "",
             f"handle:{lead.social_handle.lower()}" if lead.social_handle else "",
             f"email:{lead.email.lower()}" if lead.email else "",
         ]
