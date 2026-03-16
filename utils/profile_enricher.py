@@ -19,7 +19,6 @@ import dataclasses
 import json
 import logging
 import re
-import threading
 import time
 import urllib.request
 from typing import Callable
@@ -35,8 +34,7 @@ from models import Lead
 from utils.classifiers import classify_lead, extract_interest_signals
 from utils.contact_enricher import ContactEnricher
 from utils.helpers import check_url_reachable, detect_location, extract_emails, extract_follower_count, extract_phones, extract_website
-from ai_engine import analyse_lead, is_ai_available
-from utils.llm_classifier import classify_bio, is_ollama_available
+from ai_engine import analyse_lead
 from utils.scoring import score_lead_full, score_lead_with_profile
 
 logger = logging.getLogger(__name__)
@@ -51,9 +49,6 @@ def _soup_meta(soup: BeautifulSoup, **attrs) -> str:
         return str(tag.get("content") or tag.get("property") or "").strip()
     return ""
 
-
-_ollama_checked: bool | None = None  # None = not yet checked
-_ollama_lock = threading.Lock()
 
 # Patterns that indicate a useless/synthetic bio (og:description boilerplate,
 # LinkedIn mutual-connection snippets, etc.). Strip before classifying.
@@ -83,31 +78,10 @@ def _re_enrich(lead: Lead) -> Lead:
     signals = lead.interest_signals or extract_interest_signals(text)
     updated = dataclasses.replace(lead, lead_type=lead_type, interest_signals=signals)
 
-    # ── Step 1: rule-based lead_type from bio (fast, always runs) ────────────
-    global _ollama_checked
-    with _ollama_lock:
-        if _ollama_checked is None:
-            _ollama_checked = is_ollama_available()
-            logger.info(
-                "Ollama %s — %s",
-                "available" if _ollama_checked else "not available",
-                "AI reasoning enabled." if _ollama_checked else "rule-based classification only.",
-            )
-        ollama_active = _ollama_checked
-
-    # Legacy classify_bio for lead_type only (fast 1.5b call, keeps backward compat)
-    if ollama_active and clean_bio and len(clean_bio.strip()) >= 20:
-        llm = classify_bio(clean_bio, existing_lead_type=updated.lead_type)
-        if llm["source"] == "llm":
-            updated = dataclasses.replace(updated, lead_type=llm["lead_type"])
-            if llm["buying_intent"] > 0:
-                hint = f"intent:{llm['buying_intent']}/10 — {llm['reason']}"
-                updated = dataclasses.replace(updated, engagement_hint=hint)
-
-    # ── Step 2: full scoring pipeline ────────────────────────────────────────
+    # ── Step 1: full scoring pipeline ────────────────────────────────────────
     new_score, new_profile, result = score_lead_full(updated)
 
-    # ── Step 3: AI reasoning (structured multi-field analysis) ───────────────
+    # ── Step 2: AI reasoning (structured multi-field analysis, replaces legacy llm_classifier) ──
     ai = analyse_lead(updated, result)
 
     if ai.source == "ai":
@@ -119,6 +93,12 @@ def _re_enrich(lead: Lead) -> Lead:
         # Upgrade lead_type if AI is more specific
         if ai.lead_type and ai.lead_type != "none" and ai.lead_type != updated.lead_type:
             updated = dataclasses.replace(updated, lead_type=ai.lead_type)
+        # Set engagement_hint from AI buying intent (replaces legacy llm_classifier field)
+        if ai.buying_intent > 0:
+            _reason = ai.reasons[0] if ai.reasons else ai.contact_angle
+            updated = dataclasses.replace(
+                updated, engagement_hint=f"intent:{ai.buying_intent}/10 — {_reason}"
+            )
 
     bi = {
         "opportunity_score":        result.opportunity_score,
