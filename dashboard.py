@@ -25,6 +25,7 @@ from scoring.score_engine import ScoreEngine
 from scoring.weights_config import RankingMode
 from utils.database import (
     get_leads_df,
+    get_platform_evolution_df,
     get_runs_df,
     init_db,
     update_lead_status,
@@ -1295,6 +1296,28 @@ def _rm_chart_header(title: str, eyebrow: str = "") -> None:
     )
 
 
+def _render_platform_quality_bar(df: "pd.DataFrame", title: str, caption: str = "") -> None:
+    """Render a reusable platform avg-score bar chart."""
+    if df.empty:
+        return
+    import plotly.express as _px_plat
+    _fig = _px_plat.bar(
+        df,
+        x="source_platform",
+        y="avg_score",
+        text="n_leads",
+        title=title,
+        labels={"avg_score": "Score promedio", "source_platform": "Plataforma"},
+        color="avg_score",
+        color_continuous_scale="Blues",
+    )
+    _fig.update_traces(texttemplate="%{text} leads", textposition="outside")
+    _fig.update_layout(coloraxis_showscale=False)
+    st.plotly_chart(_fig, width="stretch")
+    if caption:
+        st.caption(caption)
+
+
 _CITY_COORDS: dict = {
     "miami": (25.77, -80.19), "new york": (40.71, -74.00), "los angeles": (34.05, -118.24),
     "london": (51.51, -0.13), "paris": (48.85, 2.35), "milan": (45.46, 9.19),
@@ -1427,7 +1450,7 @@ def _lead_detail_modal(row: pd.Series, selected_mode: str, db_path) -> None:
         xaxis=dict(range=[0, 115], title="Puntuación (0–100)"),
         height=280, margin=dict(l=10, r=10, t=40, b=10),
     )
-    st.plotly_chart(_fig, use_container_width=True)
+    st.plotly_chart(_fig, width="stretch")
 
     # Reasons + warnings
     _rc, _wc = st.columns(2)
@@ -1649,6 +1672,28 @@ with tab_opp:
 
     leads_df["_confidence"] = leads_df.apply(_confidence_from_row, axis=1)
 
+    # ── Hero KPIs — universe summary (pre-filter, always visible first) ────────
+    if not leads_df.empty:
+        _hz_sc = leads_df["score"].fillna(0)
+        _hz_top = int((_hz_sc >= 50).sum())
+        _hz_alta = int(((_hz_sc >= 38) & (_hz_sc < 50)).sum())
+        _hz_contact = 0
+        if "email" in leads_df.columns and "website" in leads_df.columns:
+            _hz_contact = int(
+                ((leads_df["email"].fillna("").str.strip() != "") |
+                 (leads_df["website"].fillna("").str.strip() != "")).sum()
+            )
+        _hz_signals = 0
+        for _sc_col in ["event_signal_score", "project_signal_score"]:
+            if _sc_col in leads_df.columns:
+                _hz_signals = max(_hz_signals, int((leads_df[_sc_col].fillna(0) >= 30).sum()))
+        _hc1, _hc2, _hc3, _hc4 = st.columns(4)
+        _hc1.metric("🟢 Top ahora",          _hz_top,     help="Score ≥ 50 — contactar esta semana")
+        _hc2.metric("🟡 Alta prioridad",     _hz_alta,    help="Score 38–49 — preparar propuesta")
+        _hc3.metric("📬 Contactables hoy",   _hz_contact, help="Tienen email o web disponible")
+        _hc4.metric("⚡ Con señales activas", _hz_signals, help="Event signal o project signal ≥ 30")
+        st.divider()
+
     # ── Ranking mode selector ──────────────────────────────────────────────────
     st.subheader("Modo de ranking")
     _mode_options = list(_RANKING_MODES.keys())
@@ -1805,6 +1850,24 @@ with tab_opp:
     if "score" in _cdf.columns:
         _cdf.insert(2, "Prioridad", _cdf["score"].apply(_score_badge))
 
+    # Señales activas: event, project, buying power — muestra badges si score alto
+    def _signal_badges(row) -> str:
+        _s = []
+        if float(row.get("event_signal_score") or 0) >= 35:
+            _s.append("🎪")
+        if float(row.get("project_signal_score") or 0) >= 30:
+            _s.append("🏗")
+        if float(row.get("buying_power_score") or 0) >= 40:
+            _s.append("💎")
+        if float(row.get("specifier_score") or 0) >= 40:
+            _s.append("📐")
+        return " ".join(_s) if _s else ""
+
+    _signal_cols = ["event_signal_score", "project_signal_score", "buying_power_score", "specifier_score"]
+    if any(c in filtered.columns for c in _signal_cols):
+        _sig_src = filtered.reindex(columns=_signal_cols, fill_value=0).reset_index(drop=True)
+        _cdf["Señales"] = _sig_src.apply(_signal_badges, axis=1)
+
     # Contacto: muestra icono si hay email o web
     def _contacto_icon(r):
         icons = []
@@ -1826,7 +1889,7 @@ with tab_opp:
         )
 
     _cdf_cols_final = [c for c in
-        ["#", "score", "Prioridad", "status", "name", "social_handle",
+        ["#", "score", "Prioridad", "Señales", "status", "name", "social_handle",
          "lead_profile", "lead_type", "source_platform", "Contacto", "country", "_confidence"]
         if c in _cdf.columns]
     _cdf = _cdf[_cdf_cols_final]
@@ -1835,6 +1898,8 @@ with tab_opp:
         "#":               st.column_config.NumberColumn("#",            format="%d",  width="small"),
         "score":           st.column_config.NumberColumn("Score ★",     format="%d",  width="small"),
         "Prioridad":       st.column_config.TextColumn(  "Prioridad",                 width="small"),
+        "Señales":         st.column_config.TextColumn(  "Señales",                   width="small",
+                               help="🎪 Evento activo  🏗 Proyecto  💎 Alto poder adquisitivo  📐 Especificador"),
         "status":          st.column_config.TextColumn(  "Estado",                    width="small"),
         "name":            st.column_config.TextColumn(  "Nombre",                    width="medium"),
         "social_handle":   st.column_config.TextColumn(  "Handle",                    width="medium"),
@@ -1851,7 +1916,7 @@ with tab_opp:
         _cdf,
         column_config=_compact_cfg,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         height=460,
         on_select="rerun",
         selection_mode="single-row",
@@ -1893,33 +1958,33 @@ with tab_opp:
 
     ec1, ec2, ec3, ec4, ec5 = st.columns(5)
     ec1.download_button(
-        f"📤 Outreach ({_outreach_count})",
+        f"📤 Outreach ({_outreach_count} contactables)",
         data=_exp_outreach[0], file_name=_exp_outreach[1], mime=_exp_outreach[2],
-        help="Leads con email o web y score ≥ 50 (prioridad Top). Listos para contactar.",
+        help="Score ≥ 50 + tienen email o web. Estos ya puedes contactar hoy.",
         width="stretch",
     )
     ec2.download_button(
-        "🗂 CRM",
+        "🗂 CRM — importar",
         data=_exp_crm[0], file_name=_exp_crm[1], mime=_exp_crm[2],
-        help="Campos limpios para HubSpot, Notion, Airtable o Salesforce.",
+        help="Formato limpio para HubSpot, Notion, Airtable o Salesforce. Sin campos técnicos.",
         width="stretch",
     )
     ec3.download_button(
-        "🔍 Investigación",
+        "🔍 Investigación completa",
         data=_exp_research[0], file_name=_exp_research[1], mime=_exp_research[2],
-        help="Lista completa con bio y señales para análisis manual.",
+        help="Bio, señales, scores y metadata completa. Para análisis manual antes de contactar.",
         width="stretch",
     )
     ec4.download_button(
-        "📊 Ejecutivo",
+        "📊 Ejecutivo (top 20)",
         data=_exp_executive[0], file_name=_exp_executive[1], mime=_exp_executive[2],
-        help="Top 20 leads. Sin datos técnicos. Para compartir con el equipo.",
+        help="Solo los 20 mejores leads, sin datos técnicos. Para compartir con el equipo o clientes.",
         width="stretch",
     )
     ec5.download_button(
-        "🛠 Completo (JSON)",
+        "🛠 JSON completo",
         data=_exp_full[0], file_name=_exp_full[1], mime=_exp_full[2],
-        help="Todos los campos. Para análisis técnico.",
+        help="Todos los campos en JSON. Para análisis técnico o integración con otros sistemas.",
         width="stretch",
     )
 
@@ -1947,207 +2012,14 @@ with tab_analisis:
             "Ejecuta el scraping desde la pestaña **🎯 Oportunidades** para empezar a recopilar datos."
         )
 
-    # ── KPIs ──────────────────────────────────────────────────────────────────
-    if not _all_leads.empty:
-        st.subheader("Métricas generales del universo de leads")
-        _email_web_count = 0
-        if "email" in _enriched_leads.columns and "website" in _enriched_leads.columns:
-            _email_web_count = int(
-                ((_enriched_leads["email"].fillna("").str.strip() != "") |
-                 (_enriched_leads["website"].fillna("").str.strip() != "")).sum()
-            )
-
-        _pending_enrichment = len(_all_leads) - _enriched_all
-        ka1, ka2, ka3, ka4, ka5, ka6 = st.columns(6)
-        ka1.metric("Total leads detectados", len(_all_leads),
-                   delta=f"{_pending_enrichment} pendientes de enriquecer" if _pending_enrichment else None,
-                   delta_color="off")
-        ka2.metric("Score promedio ✓", f"{_scores_all.mean():.1f}" if not _scores_all.empty else "—")
-        ka3.metric("Score mediano ✓", int(_scores_all.median()) if not _scores_all.empty else 0)
-        ka4.metric("Leads 🔥 Top (≥ 50)", int((_scores_all >= 50).sum()))
-        ka5.metric("Con email o web", _email_web_count)
-        ka6.metric("Perfiles enriquecidos", _enriched_all)
-
-    st.divider()
-
-    # ── Platform quality chart ─────────────────────────────────────────────────
-    st.subheader("Calidad por plataforma")
-    _plat_quality = (
-        _enriched_leads.groupby("source_platform")["score"]
-        .agg(["mean", "count"])
-        .reset_index()
-        .rename(columns={"mean": "avg_score", "count": "n_leads"})
-        .sort_values("avg_score", ascending=False)
-    )
-    if not _plat_quality.empty:
-        fig_pq = px.bar(
-            _plat_quality,
-            x="source_platform",
-            y="avg_score",
-            text="n_leads",
-            title="Calidad por plataforma — score promedio (n = leads totales)",
-            labels={"avg_score": "Score promedio", "source_platform": "Plataforma"},
-            color="avg_score",
-            color_continuous_scale="Blues",
-        )
-        fig_pq.update_traces(texttemplate="%{text} leads", textposition="outside")
-        fig_pq.update_layout(coloraxis_showscale=False)
-        st.plotly_chart(fig_pq, width="stretch")
-        st.caption("Las plataformas con mayor score promedio generan leads de mejor calidad.")
-
-    st.divider()
-
-    # ── Lead type ranking ──────────────────────────────────────────────────────
-    st.subheader("Tipos de profesional detectados")
-    if "lead_type" in _enriched_leads.columns:
-        _lt_quality = (
-            _enriched_leads[_enriched_leads["lead_type"].fillna("") != ""]
-            .groupby("lead_type")["score"]
-            .agg(["count", "mean"])
-            .reset_index()
-            .rename(columns={"count": "n", "mean": "avg_score"})
-            .sort_values("avg_score", ascending=True)
-        )
-        if not _lt_quality.empty:
-            _lt_quality["label"] = _lt_quality["lead_type"].apply(_lead_type_label)
-            fig_lt = px.bar(
-                _lt_quality,
-                x="avg_score",
-                y="label",
-                orientation="h",
-                text="n",
-                title="Tipos de profesional detectados — ordenados por calidad media",
-                labels={"avg_score": "Score promedio", "label": "Tipo"},
-                color="avg_score",
-                color_continuous_scale="Greens",
-            )
-            fig_lt.update_traces(texttemplate="%{text} leads", textposition="outside")
-            fig_lt.update_layout(coloraxis_showscale=False, height=400)
-            st.plotly_chart(fig_lt, width="stretch")
-
-    st.divider()
-
-    # ── Score distribution with zones ─────────────────────────────────────────
-    st.subheader("Distribución de scores")
-    fig_hist = px.histogram(
-        _enriched_leads,
-        x="score",
-        nbins=20,
-        title="Distribución de scores — cómo está el universo de leads",
-        labels={"score": "Score", "count": "Cantidad de leads"},
-        color_discrete_sequence=["#636EFA"],
-    )
-    fig_hist.add_vline(x=38, line_dash="dash", line_color="orange", annotation_text="Alta")
-    fig_hist.add_vline(x=50, line_dash="dash", line_color="darkgreen", annotation_text="Top")
-    # Colored zone background rectangles — thresholds match _score_label() / _score_badge()
-    fig_hist.add_vrect(x0=0,  x1=10,  fillcolor="lightgray",   opacity=0.15, line_width=0,
-                       annotation_text="Mínima", annotation_position="top left")
-    fig_hist.add_vrect(x0=10, x1=25,  fillcolor="lightsalmon",  opacity=0.10, line_width=0,
-                       annotation_text="Baja",   annotation_position="top left")
-    fig_hist.add_vrect(x0=25, x1=38,  fillcolor="lightyellow",  opacity=0.14, line_width=0,
-                       annotation_text="Media",  annotation_position="top left")
-    fig_hist.add_vrect(x0=38, x1=50,  fillcolor="lightblue",    opacity=0.14, line_width=0,
-                       annotation_text="Alta",   annotation_position="top left")
-    fig_hist.add_vrect(x0=50, x1=100, fillcolor="lightgreen",   opacity=0.14, line_width=0,
-                       annotation_text="Top",    annotation_position="top left")
-    st.plotly_chart(fig_hist, width="stretch")
-    _pct_alta = round(100 * float((_scores_all >= 50).sum()) / max(len(_scores_all), 1), 1)
+    # ══ SECCIÓN 1: Salud del sistema de aprendizaje ═══════════════════════════
+    _rm_chart_header("Salud del sistema de aprendizaje", "Algoritmos · keywords · evolución")
     st.caption(
-        f"El {_pct_alta}% de los leads tiene score ≥ 50 (prioridad Top). "
-        "Los leads bajo 25 requieren enriquecimiento antes de contactar."
+        "Esta sección muestra cómo aprende el sistema: qué keywords rinden, "
+        "si los scores mejoran por corrida, y qué plataforma acumula más calidad. "
+        "Léela primero para entender si el motor está funcionando."
     )
-
-    st.divider()
-
-    # ── Country chart ──────────────────────────────────────────────────────────
-    st.subheader("Distribución geográfica")
-    _TARGET_COUNTRIES = {
-        "argentina", "españa", "spain", "méxico", "mexico", "chile", "uruguay",
-        "colombia", "perú", "peru", "brasil", "brazil", "usa", "france",
-        "italia", "uk",
-    }
-    if "country" in _all_leads.columns:
-        _country_df = (
-            _all_leads[_all_leads["country"].fillna("") != ""]
-            .groupby("country")
-            .size()
-            .reset_index(name="count")
-            .sort_values("count", ascending=False)
-            .head(10)
-        )
-        if not _country_df.empty:
-            _country_df["target"] = _country_df["country"].str.lower().isin(_TARGET_COUNTRIES)
-            _country_df["color"] = _country_df["target"].map({True: "#1a6b3c", False: "#aec6f0"})
-            fig_ctry = px.bar(
-                _country_df,
-                x="country",
-                y="count",
-                title="Distribución geográfica — top 10 países",
-                labels={"count": "Leads", "country": "País"},
-                color="target",
-                color_discrete_map={True: "#1a6b3c", False: "#aec6f0"},
-            )
-            fig_ctry.update_layout(showlegend=False)
-            st.plotly_chart(fig_ctry, width="stretch")
-
-    st.divider()
-
-    # ── Recurrence panel ───────────────────────────────────────────────────────
-    if "scrape_count" in _all_leads.columns:
-        _recurrent = _all_leads[_all_leads["scrape_count"].fillna(1) > 1].copy()
-        if not _recurrent.empty:
-            with st.expander(f"🔁 Perfiles recurrentes ({len(_recurrent)} cuentas vistas más de una vez)", expanded=False):
-                st.caption(
-                    "Estos perfiles aparecen sistemáticamente en las búsquedas — "
-                    "son señal consistente de relevancia."
-                )
-                _rec_cols = [c for c in ["source_platform", "name", "social_handle", "scrape_count", "score", "profile_url"]
-                             if c in _recurrent.columns]
-                st.dataframe(
-                    _recurrent[_rec_cols].sort_values("scrape_count", ascending=False).head(30),
-                    hide_index=True,
-                    width="stretch",
-                )
-
-    st.divider()
-
-    # ── Pipeline / funnel de estado de leads ───────────────────────────────────
-    if "status" in _all_leads.columns and not _all_leads.empty:
-        _pipeline_order = ["nuevo", "contactado", "respondió", "cerrado", "descartado"]
-        _pipeline_counts = _all_leads["status"].fillna("nuevo").value_counts()
-        _funnel_data = []
-        for _st in _pipeline_order:
-            _cnt = int(_pipeline_counts.get(_st, 0))
-            _funnel_data.append({"Estado": _st.capitalize(), "Leads": _cnt})
-        _funnel_df = pd.DataFrame(_funnel_data)
-
-        _fc1, _fc2 = st.columns([2, 1])
-        with _fc1:
-            st.subheader("Pipeline de leads")
-            _funnel_colors = ["#636EFA", "#00CC96", "#AB63FA", "#1a6b3c", "#EF553B"]
-            fig_funnel = go.Figure(go.Funnel(
-                y=_funnel_df["Estado"],
-                x=_funnel_df["Leads"],
-                textinfo="value+percent initial",
-                marker=dict(color=_funnel_colors[:len(_funnel_df)]),
-            ))
-            fig_funnel.update_layout(
-                height=300,
-                margin=dict(l=10, r=10, t=20, b=10),
-            )
-            st.plotly_chart(fig_funnel, use_container_width=True)
-        with _fc2:
-            st.subheader("Conversión")
-            _total = len(_all_leads)
-            _contactados = int(_pipeline_counts.get("contactado", 0)) + int(_pipeline_counts.get("respondió", 0)) + int(_pipeline_counts.get("cerrado", 0))
-            _respondieron = int(_pipeline_counts.get("respondió", 0)) + int(_pipeline_counts.get("cerrado", 0))
-            _cerrados = int(_pipeline_counts.get("cerrado", 0))
-            st.metric("Tasa contacto", f"{100 * _contactados / max(_total, 1):.1f}%")
-            st.metric("Tasa respuesta", f"{100 * _respondieron / max(_contactados, 1):.1f}%" if _contactados else "—")
-            st.metric("Tasa cierre", f"{100 * _cerrados / max(_respondieron, 1):.1f}%" if _respondieron else "—")
-            st.caption("Registra estados en el detalle de cada lead (🎯 Oportunidades) para ver el embudo evolucionar.")
-
-        st.divider()
+    st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
 
     # ── Keyword performance (UCB ranker) ───────────────────────────────────────
     st.subheader("Rendimiento de keywords")
@@ -2244,18 +2116,42 @@ with tab_analisis:
                 fig_kw_evo.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02))
                 st.plotly_chart(fig_kw_evo, width="stretch")
 
-                # Secondary: leads count per keyword per run (bar chart)
-                with st.expander("Ver cantidad de leads por keyword por corrida", expanded=False):
-                    fig_kw_leads = px.bar(
-                        _kw_hist_plot.sort_values("run_id"),
-                        x="run_label",
-                        y="n_leads",
-                        color="keyword",
-                        barmode="group",
-                        title="Leads capturados por keyword por corrida",
-                        labels={"run_label": "Corrida", "n_leads": "Leads", "keyword": "Keyword"},
+                # Secondary: heatmap keyword × corrida (leads count)
+                with st.expander("Heatmap de leads por keyword por corrida", expanded=False):
+                    _hm_data = (
+                        _kw_hist_plot.sort_values("run_id")
+                        .pivot_table(index="keyword", columns="run_label", values="n_leads", aggfunc="sum", fill_value=0)
                     )
-                    fig_kw_leads.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02))
+                    # Keep runs ordered chronologically (columns already sorted by run_id)
+                    _hm_run_order = (
+                        _kw_hist_plot.drop_duplicates("run_id").sort_values("run_id")["run_label"].tolist()
+                    )
+                    _hm_data = _hm_data.reindex(columns=[c for c in _hm_run_order if c in _hm_data.columns])
+                    import plotly.graph_objects as _go_hm
+                    fig_kw_leads = _go_hm.Figure(data=_go_hm.Heatmap(
+                        z=_hm_data.values,
+                        x=_hm_data.columns.tolist(),
+                        y=_hm_data.index.tolist(),
+                        colorscale=[
+                            [0.0, "#1C1A17"],
+                            [0.01, "#2d2a20"],
+                            [0.3, "#5a4a1e"],
+                            [0.7, "#C4A35A"],
+                            [1.0, "#F5F0E6"],
+                        ],
+                        hovertemplate="<b>%{y}</b><br>%{x}<br>%{z} leads<extra></extra>",
+                        showscale=True,
+                    ))
+                    fig_kw_leads.update_layout(
+                        title="Leads capturados por keyword × corrida",
+                        plot_bgcolor="#0F0E0C",
+                        paper_bgcolor="#0F0E0C",
+                        font_color="#E8E0D0",
+                        xaxis=dict(tickangle=-35, tickfont=dict(size=11)),
+                        yaxis=dict(tickfont=dict(size=11), autorange="reversed"),
+                        margin=dict(l=8, r=8, t=40, b=8),
+                        height=max(280, len(_hm_data) * 28 + 80),
+                    )
                     st.plotly_chart(fig_kw_leads, width="stretch")
 
                 st.caption(
@@ -2289,6 +2185,9 @@ with tab_analisis:
     _evo_rows = []
     if not _runs_df.empty and "score_histogram" in _runs_df.columns:
         for _, _row in _runs_df.iterrows():
+            # Only include completed runs — failed/running runs have partial data
+            if str(_row.get("status", "")).strip() != "completed":
+                continue
             _raw_hist = _row.get("score_histogram")
             if not _raw_hist:
                 continue
@@ -2334,8 +2233,9 @@ with tab_analisis:
         st.plotly_chart(fig_evo_avg, width="stretch")
 
         st.caption(
-            "Una tendencia ascendente indica que el ranking UCB está priorizando "
-            "keywords más rentables y los hashtags descubiertos generan leads de mayor calidad."
+            "Si el score sube entre corridas, el sistema está aprendiendo. "
+            "Si baja o se estanca, revisa las keywords: probablemente hay que reemplazar las de bajo rendimiento "
+            "por los hashtags descubiertos automáticamente."
         )
 
         st.divider()
@@ -2374,33 +2274,283 @@ with tab_analisis:
 
         st.divider()
 
-        # ── Per-platform avg_score evolution ──────────────────────────────
-        _plat_rows = []
-        for _r in _evo_rows:
-            for _plat, _pdata in _r.get("by_platform", {}).items():
-                _plat_rows.append({
-                    "run": _r["run"],
-                    "run_id": _r["run_id"],
-                    "plataforma": _plat,
-                    "avg": _pdata.get("avg", 0),
-                    "leads": _pdata.get("count", 0),
-                })
-        if _plat_rows:
-            _plat_evo_df = pd.DataFrame(_plat_rows).sort_values("run_id")
+        # ── Per-platform avg_score evolution (cumulative, from leads table) ──
+        _plat_evo_df = get_platform_evolution_df(config.sqlite_db_path)
+        if not _plat_evo_df.empty:
+            _run_order = (
+                _plat_evo_df.drop_duplicates("run_id")
+                .sort_values("run_id")["run"]
+                .tolist()
+            )
+            _PLAT_COLORS = {
+                "instagram": "#E1306C",   # Instagram pink-red
+                "facebook":  "#1877F2",   # Facebook blue
+                "linkedin":  "#00BFFF",   # LinkedIn sky-blue (distinct from FB)
+                "behance":   "#C4A35A",   # RM gold
+                "pinterest": "#E60023",   # Pinterest red
+                "reddit":    "#FF6314",   # Reddit orange
+                "twitter":   "#1DA1F2",   # Twitter cyan
+            }
             fig_plat_evo = px.line(
                 _plat_evo_df,
                 x="run",
                 y="avg",
                 color="plataforma",
+                color_discrete_map=_PLAT_COLORS,
+                category_orders={"run": _run_order},
                 markers=True,
-                title="Score promedio por plataforma a lo largo del tiempo",
-                labels={"run": "Corrida", "avg": "Score promedio", "plataforma": "Plataforma"},
+                title="Score promedio acumulado por plataforma",
+                labels={"run": "Corrida", "avg": "Score promedio", "plataforma": "Plataforma", "count": "Leads"},
+                hover_data={"count": True},
+            )
+            fig_plat_evo.update_layout(
+                plot_bgcolor="#0F0E0C",
+                paper_bgcolor="#0F0E0C",
+                font_color="#E8E0D0",
+                legend=dict(bgcolor="rgba(0,0,0,0)"),
             )
             st.plotly_chart(fig_plat_evo, width="stretch")
             st.caption(
-                "Permite detectar si una plataforma empieza a degradarse "
-                "(bot-detection, cambio de algoritmo) o si mejora con los nuevos keywords."
+                "Score acumulativo de todos los leads de cada plataforma hasta esa corrida. "
+                "Permite detectar degradación (bot-detection, cambio de algoritmo) o mejora sostenida."
             )
+
+    st.divider()
+    # ══ SECCIÓN 2: Estado del universo de leads ═══════════════════════════════
+    _rm_chart_header("Estado del universo de leads", "Calidad · distribución · conversión")
+    st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
+
+    # ── Delta vs corrida anterior ──────────────────────────────────────────────
+    _prev_avg: float | None = None
+    _prev_top: int | None = None
+    _runs_df_delta = get_runs_df(config.sqlite_db_path)
+    if not _runs_df_delta.empty and "score_histogram" in _runs_df_delta.columns:
+        _completed_runs = _runs_df_delta[_runs_df_delta["status"].fillna("") == "completed"].sort_values("id", ascending=False)
+        _prev_hists = []
+        for _, _pr in _completed_runs.iterrows():
+            try:
+                _ph = json.loads(_pr.get("score_histogram") or "{}")
+                if _ph.get("avg"):
+                    _prev_hists.append(_ph)
+            except Exception:
+                pass
+            if len(_prev_hists) >= 2:
+                break
+        if len(_prev_hists) >= 2:
+            _prev_avg = float(_prev_hists[1].get("avg", 0))
+            _prev_bins = _prev_hists[1].get("bins", {})
+            _prev_top = sum(v for k, v in _prev_bins.items() if k.startswith("50") or k.startswith("6"))
+
+    # ── KPIs ──────────────────────────────────────────────────────────────────
+    if not _all_leads.empty:
+        st.subheader("Métricas generales del universo de leads")
+        _email_web_count = 0
+        if "email" in _enriched_leads.columns and "website" in _enriched_leads.columns:
+            _email_web_count = int(
+                ((_enriched_leads["email"].fillna("").str.strip() != "") |
+                 (_enriched_leads["website"].fillna("").str.strip() != "")).sum()
+            )
+
+        _pending_enrichment = len(_all_leads) - _enriched_all
+        _cur_avg = float(f"{_scores_all.mean():.1f}") if not _scores_all.empty else 0.0
+        _cur_top = int((_scores_all >= 50).sum())
+        _avg_delta = round(_cur_avg - _prev_avg, 1) if _prev_avg is not None else None
+        _top_delta = (_cur_top - _prev_top) if _prev_top is not None else None
+
+        ka1, ka2, ka3, ka4, ka5, ka6 = st.columns(6)
+        ka1.metric("Total leads detectados", len(_all_leads),
+                   delta=f"{_pending_enrichment} pendientes de enriquecer" if _pending_enrichment else None,
+                   delta_color="off")
+        ka2.metric("Score promedio ✓", f"{_cur_avg:.1f}" if not _scores_all.empty else "—",
+                   delta=f"{_avg_delta:+.1f} vs corrida anterior" if _avg_delta is not None else None)
+        ka3.metric("Score mediano ✓", int(_scores_all.median()) if not _scores_all.empty else 0)
+        ka4.metric("Leads 🔥 Top (≥ 50)", _cur_top,
+                   delta=f"{_top_delta:+d} vs corrida anterior" if _top_delta is not None else None)
+        ka5.metric("Con email o web", _email_web_count)
+        ka6.metric("Perfiles enriquecidos", _enriched_all)
+
+    st.divider()
+
+    # ── Platform quality chart ─────────────────────────────────────────────────
+    st.subheader("Calidad por plataforma")
+    _plat_quality = (
+        _enriched_leads.groupby("source_platform")["score"]
+        .agg(["mean", "count"])
+        .reset_index()
+        .rename(columns={"mean": "avg_score", "count": "n_leads"})
+        .sort_values("avg_score", ascending=False)
+    )
+    _render_platform_quality_bar(
+        _plat_quality,
+        title="¿Qué plataforma trae mejores leads? — score promedio por fuente",
+        caption="Si una plataforma tiene score alto, duplica sus keywords. Si tiene score bajo, considera pausarla.",
+    )
+
+    st.divider()
+
+    # ── Lead type ranking ──────────────────────────────────────────────────────
+    st.subheader("Tipos de profesional detectados")
+    if "lead_type" in _enriched_leads.columns:
+        _lt_quality = (
+            _enriched_leads[_enriched_leads["lead_type"].fillna("") != ""]
+            .groupby("lead_type")["score"]
+            .agg(["count", "mean"])
+            .reset_index()
+            .rename(columns={"count": "n", "mean": "avg_score"})
+            .sort_values("avg_score", ascending=False)
+        )
+        if not _lt_quality.empty:
+            _lt_quality["label"] = _lt_quality["lead_type"].apply(_lead_type_label)
+            fig_lt = px.bar(
+                _lt_quality,
+                x="avg_score",
+                y="label",
+                orientation="h",
+                text="n",
+                title="¿Quiénes son y cuánto valen? — tipos de profesional por calidad media",
+                labels={"avg_score": "Score promedio", "label": "Tipo"},
+                color="avg_score",
+                color_continuous_scale="Greens",
+            )
+            fig_lt.update_traces(texttemplate="%{text} leads", textposition="outside")
+            fig_lt.update_layout(
+                coloraxis_showscale=False,
+                height=400,
+                yaxis=dict(autorange="reversed"),
+            )
+            st.plotly_chart(fig_lt, width="stretch")
+
+    st.divider()
+
+    # ── Score distribution with zones ─────────────────────────────────────────
+    st.subheader("Distribución de scores")
+    fig_hist = px.histogram(
+        _enriched_leads,
+        x="score",
+        nbins=20,
+        title="Distribución de scores — cómo está el universo de leads",
+        labels={"score": "Score", "count": "Cantidad de leads"},
+        color_discrete_sequence=["#636EFA"],
+    )
+    fig_hist.add_vline(x=38, line_dash="dash", line_color="orange", annotation_text="Alta")
+    fig_hist.add_vline(x=50, line_dash="dash", line_color="darkgreen", annotation_text="Top")
+    # Colored zone background rectangles — thresholds match _score_label() / _score_badge()
+    fig_hist.add_vrect(x0=0,  x1=10,  fillcolor="lightgray",   opacity=0.15, line_width=0,
+                       annotation_text="Mínima", annotation_position="top left")
+    fig_hist.add_vrect(x0=10, x1=25,  fillcolor="lightsalmon",  opacity=0.10, line_width=0,
+                       annotation_text="Baja",   annotation_position="top left")
+    fig_hist.add_vrect(x0=25, x1=38,  fillcolor="lightyellow",  opacity=0.14, line_width=0,
+                       annotation_text="Media",  annotation_position="top left")
+    fig_hist.add_vrect(x0=38, x1=50,  fillcolor="lightblue",    opacity=0.14, line_width=0,
+                       annotation_text="Alta",   annotation_position="top left")
+    fig_hist.add_vrect(x0=50, x1=100, fillcolor="lightgreen",   opacity=0.14, line_width=0,
+                       annotation_text="Top",    annotation_position="top left")
+    st.plotly_chart(fig_hist, width="stretch")
+    _pct_alta = round(100 * float((_scores_all >= 50).sum()) / max(len(_scores_all), 1), 1)
+    st.caption(
+        f"El {_pct_alta}% de los leads tiene score ≥ 50 (prioridad Top). "
+        "Los leads bajo 25 requieren enriquecimiento antes de contactar."
+    )
+
+    st.divider()
+
+    # ── Country chart ──────────────────────────────────────────────────────────
+    st.subheader("Distribución geográfica")
+    _TARGET_COUNTRIES = {
+        "argentina", "españa", "spain", "méxico", "mexico", "chile", "uruguay",
+        "colombia", "perú", "peru", "brasil", "brazil", "usa", "france",
+        "italia", "uk",
+    }
+    if "country" in _all_leads.columns:
+        _country_df = (
+            _all_leads[_all_leads["country"].fillna("") != ""]
+            .groupby("country")
+            .size()
+            .reset_index(name="count")
+            .sort_values("count", ascending=False)
+            .head(10)
+        )
+        if not _country_df.empty:
+            _country_df["target"] = _country_df["country"].str.lower().isin(_TARGET_COUNTRIES)
+            _country_df["color"] = _country_df["target"].map({True: "#1a6b3c", False: "#aec6f0"})
+            fig_ctry = px.bar(
+                _country_df,
+                x="country",
+                y="count",
+                title="Distribución geográfica — top 10 países",
+                labels={"count": "Leads", "country": "País"},
+                color="target",
+                color_discrete_map={True: "#1a6b3c", False: "#aec6f0"},
+            )
+            fig_ctry.update_layout(showlegend=False)
+            st.plotly_chart(fig_ctry, width="stretch")
+
+    st.divider()
+
+    # ── Recurrence panel ───────────────────────────────────────────────────────
+    if "scrape_count" in _all_leads.columns:
+        _recurrent = _all_leads[_all_leads["scrape_count"].fillna(1) > 1].copy()
+        if not _recurrent.empty:
+            with st.expander(f"🔁 Perfiles recurrentes ({len(_recurrent)} cuentas vistas más de una vez)", expanded=False):
+                st.caption(
+                    "Estos perfiles aparecen sistemáticamente en las búsquedas — "
+                    "son señal consistente de relevancia."
+                )
+                _rec_cols = [c for c in ["source_platform", "name", "social_handle", "scrape_count", "score", "profile_url"]
+                             if c in _recurrent.columns]
+                st.dataframe(
+                    _recurrent[_rec_cols].sort_values("scrape_count", ascending=False).head(30),
+                    hide_index=True,
+                    width="stretch",
+                )
+
+    st.divider()
+
+    # ── Pipeline / funnel de estado de leads ───────────────────────────────────
+    if "status" in _all_leads.columns and not _all_leads.empty:
+        _pipeline_order = ["nuevo", "contactado", "respondió", "cerrado", "descartado"]
+        _pipeline_counts = _all_leads["status"].fillna("nuevo").value_counts()
+        _funnel_colors_map = {
+            "nuevo": "#636EFA", "contactado": "#00CC96",
+            "respondió": "#AB63FA", "cerrado": "#1a6b3c", "descartado": "#EF553B",
+        }
+        # Only include stages with leads — empty stages break Plotly's funnel shape
+        _funnel_data = [
+            {"Estado": _st.capitalize(), "Leads": int(_pipeline_counts.get(_st, 0)), "color": _funnel_colors_map[_st]}
+            for _st in _pipeline_order
+            if int(_pipeline_counts.get(_st, 0)) > 0
+        ]
+        if not _funnel_data:
+            _funnel_data = [{"Estado": "Nuevo", "Leads": 0, "color": "#636EFA"}]
+        _funnel_df = pd.DataFrame(_funnel_data)
+
+        _fc1, _fc2 = st.columns([2, 1])
+        with _fc1:
+            st.subheader("Pipeline de leads")
+            fig_funnel = go.Figure(go.Funnel(
+                y=_funnel_df["Estado"],
+                x=_funnel_df["Leads"],
+                textinfo="value+percent initial",
+                marker=dict(color=_funnel_df["color"].tolist()),
+            ))
+            fig_funnel.update_layout(
+                height=300,
+                margin=dict(l=10, r=10, t=20, b=10),
+            )
+            st.plotly_chart(fig_funnel, width="stretch")
+        with _fc2:
+            st.subheader("Conversión")
+            _total = len(_all_leads)
+            _contactados = int(_pipeline_counts.get("contactado", 0)) + int(_pipeline_counts.get("respondió", 0)) + int(_pipeline_counts.get("cerrado", 0))
+            _respondieron = int(_pipeline_counts.get("respondió", 0)) + int(_pipeline_counts.get("cerrado", 0))
+            _cerrados = int(_pipeline_counts.get("cerrado", 0))
+            st.metric("Tasa contacto", f"{100 * _contactados / max(_total, 1):.1f}%")
+            st.metric("Tasa respuesta", f"{100 * _respondieron / max(_contactados, 1):.1f}%" if _contactados else "—")
+            st.metric("Tasa cierre", f"{100 * _cerrados / max(_respondieron, 1):.1f}%" if _respondieron else "—")
+            st.caption("Registra conversiones y descartes en cada lead para que el sistema aprenda qué perfiles convierten. Sin datos reales, el embudo no puede guiarte.")
+
+        st.divider()
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2493,7 +2643,7 @@ with tab_mapa:
                     )
                     _map_fig.update_layout(margin=dict(l=0, r=0, t=20, b=0))
                     _map_fig.update_traces(marker=dict(line=dict(width=0.5, color="rgba(196,163,90,0.4)")))
-                    st.plotly_chart(_map_fig, use_container_width=True)
+                    st.plotly_chart(_map_fig, width="stretch")
 
                     # ── City ranking table + bar chart ─────────────────────────
                     _col_map_l, _col_map_r = st.columns([3, 2])
@@ -2506,7 +2656,7 @@ with tab_mapa:
                             .rename(columns={"city_display": "Ciudad", "leads": "Leads", "avg_score": "Score Prom."})
                             [["Ciudad", "Leads", "Score Prom."]]
                         )
-                        st.dataframe(_rank_df, use_container_width=True, hide_index=True)
+                        st.dataframe(_rank_df, width="stretch", hide_index=True)
 
                     with _col_map_r:
                         _rm_chart_header("Score por ciudad", "Top 10")
@@ -2530,7 +2680,7 @@ with tab_mapa:
                             gridcolor="rgba(245,240,230,0.06)",
                             tickfont=dict(color="rgba(245,240,230,0.65)", size=11),
                         )
-                        st.plotly_chart(_bar_fig, use_container_width=True)
+                        st.plotly_chart(_bar_fig, width="stretch")
                 else:
                     st.info("Ciudades detectadas pero sin coordenadas conocidas. Agrega más ciudades al diccionario _CITY_COORDS.")
             else:
@@ -2579,12 +2729,20 @@ with tab_red:
                     raw_data=_raw,
                 ))
 
-            with st.spinner("Construyendo grafo de relaciones…"):
-                _mentions = []
+            @st.cache_data(ttl=300, show_spinner=False)
+            def _build_network_cached(_lead_ids_key: tuple):
+                _m = []
                 for _l in _net_leads:
-                    _mentions.extend(parse_mentions(_l))
-                _graph = build_graph(_net_leads, _mentions)
-                _metrics = compute_graph_metrics(_graph)
+                    _m.extend(parse_mentions(_l))
+                _g = build_graph(_net_leads, _m)
+                _mt = compute_graph_metrics(_g)
+                return _m, _g, _mt
+
+            _net_cache_key = tuple(sorted(
+                str(_r.get("id")) for _, _r in _red_df.iterrows()
+            ))
+            with st.spinner("Construyendo grafo de relaciones…"):
+                _mentions, _graph, _metrics = _build_network_cached(_net_cache_key)
 
             # ── Network signal quality KPIs ───────────────────────────────────
             _mention_rate = round(len(_mentions) / max(len(_net_leads), 1) * 100, 1)
@@ -2649,7 +2807,7 @@ with tab_red:
                     lon=_geo_df_plot["lon"],
                     mode="markers",
                     marker=dict(
-                        size=_geo_df_plot["score"].apply(lambda s: max(10, min(32, s // 3))),
+                        size=_geo_df_plot["score"].apply(lambda s: max(10, min(32, (s or 10) // 3))),
                         color="#C4A35A",
                         line=dict(width=1, color="rgba(245,240,230,0.3)"),
                         opacity=0.90,
@@ -2675,7 +2833,7 @@ with tab_red:
                 ),
             )
             _geo_fig.update_layout(margin=dict(l=0, r=0, t=8, b=0))
-            st.plotly_chart(_geo_fig, use_container_width=True)
+            st.plotly_chart(_geo_fig, width="stretch")
 
             # Contextual caption under geo map
             if not _geo_nodes:
@@ -2717,7 +2875,7 @@ with tab_red:
                     } for m in _met_rows]
                     st.dataframe(
                         pd.DataFrame(_met_data),
-                        use_container_width=True, hide_index=True,
+                        width="stretch", hide_index=True,
                         column_config={
                             "Influencia": st.column_config.ProgressColumn("Influencia", min_value=0, max_value=100, format="%.1f"),
                             "Centralidad": st.column_config.ProgressColumn("Centralidad", min_value=0, max_value=100, format="%.1f"),
@@ -2755,7 +2913,7 @@ with tab_red:
                         gridcolor="rgba(245,240,230,0.04)",
                         tickfont=dict(color="rgba(245,240,230,0.65)", size=11),
                     )
-                    st.plotly_chart(_rel_fig, use_container_width=True)
+                    st.plotly_chart(_rel_fig, width="stretch")
 
                     # Influence leaders per relation type
                     st.markdown(
@@ -2860,7 +3018,7 @@ with tab_discovery:
                     height=340,
                     margin=dict(l=8, r=8, t=32, b=8),
                 )
-                st.plotly_chart(_hm_fig, use_container_width=True)
+                st.plotly_chart(_hm_fig, width="stretch")
 
             with _col_cl:
                 _rm_chart_header("Clusters de proyectos detectados", "En tiempo real")
@@ -2949,7 +3107,7 @@ with tab_discovery:
                         _cols_spec = [c for c in ["name", "city", "lead_type", "specifier_score"] if c in _top_spec.columns]
                         st.dataframe(
                             _top_spec[_cols_spec].sort_values("specifier_score", ascending=False).head(8),
-                            use_container_width=True, hide_index=True,
+                            width="stretch", hide_index=True,
                         )
                     else:
                         st.caption("Enriquece leads para ver especificadores.")
@@ -2967,7 +3125,7 @@ with tab_discovery:
                         _cols_proj = [c for c in ["name", "city", "lead_type", "project_signal_score"] if c in _top_proj.columns]
                         st.dataframe(
                             _top_proj[_cols_proj].sort_values("project_signal_score", ascending=False).head(8),
-                            use_container_width=True, hide_index=True,
+                            width="stretch", hide_index=True,
                         )
                     else:
                         st.caption("Enriquece leads para ver actores de proyecto.")
@@ -2985,7 +3143,7 @@ with tab_discovery:
                         _cols_bp = [c for c in ["name", "city", "lead_type", "buying_power_score", "opportunity_classification"] if c in _top_bp.columns]
                         st.dataframe(
                             _top_bp[_cols_bp].sort_values("buying_power_score", ascending=False).head(8),
-                            use_container_width=True, hide_index=True,
+                            width="stretch", hide_index=True,
                         )
                     else:
                         st.caption("Enriquece leads para ver poder adquisitivo.")
@@ -3187,22 +3345,13 @@ with tab_sistema:
             _all_leads.groupby("source_platform")["score"]
             .agg(["mean", "count"])
             .reset_index()
-            .rename(columns={"mean": "avg_score", "count": "total"})
+            .rename(columns={"mean": "avg_score", "count": "n_leads"})
             .sort_values("avg_score", ascending=False)
         )
-        fig_plat = px.bar(
+        _render_platform_quality_bar(
             _plat_score,
-            x="source_platform",
-            y="avg_score",
-            text="total",
-            title="Score promedio por plataforma",
-            labels={"avg_score": "Score promedio", "source_platform": "Plataforma"},
-            color="avg_score",
-            color_continuous_scale="Blues",
+            title="Score promedio por plataforma — todos los leads",
         )
-        fig_plat.update_traces(texttemplate="%{text} leads", textposition="outside")
-        fig_plat.update_layout(coloraxis_showscale=False)
-        st.plotly_chart(fig_plat, width="stretch")
 
         st.divider()
 
@@ -3533,7 +3682,7 @@ with tab_prog:
         _ctrl1, _ctrl2, _ctrl3 = st.columns([1, 1, 2])
 
         with _ctrl1:
-            if st.button("🛑 Interrumpir", type="primary", use_container_width=True):
+            if st.button("🛑 Interrumpir", type="primary", width="stretch"):
                 if _kill_scrape(scrape_pid):
                     try:
                         _LOCK_FILE.unlink(missing_ok=True)
@@ -3546,7 +3695,7 @@ with tab_prog:
                     st.error("No se pudo interrumpir el proceso.")
 
         with _ctrl2:
-            if st.button("🔄 Actualizar", use_container_width=True):
+            if st.button("🔄 Actualizar", width="stretch"):
                 st.rerun()
 
         with _ctrl3:
@@ -3583,7 +3732,7 @@ with tab_prog:
                 label_visibility="collapsed",
             )
         with _run_col2:
-            if st.button("▶ Ejecutar ahora", type="primary", use_container_width=True):
+            if st.button("▶ Ejecutar ahora", type="primary", width="stretch"):
                 _script_abs = Path(__file__).parent / "run_scrape.sh"
                 _cwd        = str(Path(__file__).parent)
                 if not _script_abs.exists():

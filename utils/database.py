@@ -621,6 +621,36 @@ def get_runs_df(db_path: Path) -> pd.DataFrame:
     return _localize_timestamps(df, ["started_at", "finished_at"])
 
 
+def get_platform_evolution_df(db_path: Path) -> pd.DataFrame:
+    """Return cumulative avg score per platform at each completed run.
+
+    For each completed run, computes the average score of ALL leads
+    (not just new ones) that existed in the DB at run completion time.
+    This gives a true picture of platform quality evolution over time.
+
+    Returns a DataFrame with columns: run_id, run, plataforma, avg, count
+    """
+    query = """
+        SELECT
+            sr.id              AS run_id,
+            '#' || sr.id || ' ' || SUBSTR(sr.started_at, 1, 10) AS run,
+            l.source_platform  AS plataforma,
+            COUNT(*)           AS count,
+            ROUND(AVG(COALESCE(l.score, 0)), 2) AS avg
+        FROM scraping_runs sr
+        JOIN leads l
+          ON l.created_at <= COALESCE(sr.finished_at, sr.started_at)
+        WHERE sr.status = 'completed'
+          AND l.source_platform IS NOT NULL
+          AND l.source_platform != ''
+        GROUP BY sr.id, l.source_platform
+        ORDER BY sr.id, l.source_platform
+    """
+    with _connect(db_path) as conn:
+        df = pd.read_sql_query(query, conn)
+    return df
+
+
 # ── Keyword performance tracking ──────────────────────────────────────────────
 
 def update_keyword_stats(
