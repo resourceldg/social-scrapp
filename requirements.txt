@@ -6,3 +6,4 @@ webdriver-manager==4.0.2
 streamlit==1.55.0
 plotly==6.6.0
 browser-cookie3>=0.20.0
+networkx>=3.0

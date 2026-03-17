@@ -21,7 +21,7 @@ output/behance_session.json
 output/instagram_session.json
 logs/
 debug_html/
-feedback/
+feedback/__pycache__/
 
 # Process locks / pids
 .scrape.lock
