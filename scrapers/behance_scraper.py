@@ -141,6 +141,9 @@ class BehanceScraper:
     platform = "behance"
     base_url = "https://www.behance.net"
 
+    def __init__(self) -> None:
+        self._search_session_ok: bool | None = None  # None=untested, True=ok, False=broken
+
     # ── Session management ────────────────────────────────────────────────────
 
     def _detect_login_wall(self, source: str) -> bool:
@@ -373,8 +376,33 @@ class BehanceScraper:
 
     # ── Public entry point ────────────────────────────────────────────────────
 
+    def _relogin(self, driver: WebDriver, config: AppConfig) -> bool:
+        """Force fresh login, discarding Chrome-profile and saved-cookie session."""
+        logger.info(
+            "Behance: search session expired — discarding stale cookies and re-logging in."
+        )
+        try:
+            driver.delete_all_cookies()
+        except Exception:
+            pass
+        _SESSION_COOKIE_FILE.unlink(missing_ok=True)
+
+        if self._try_login(driver, config):
+            _save_session_cookies(driver)
+            logger.info("Behance: re-login successful — retrying searches.")
+            self._search_session_ok = True
+            return True
+
+        logger.error(
+            "Behance: re-login failed. Run `python behance_login.py` once "
+            "to bootstrap a fresh session, then re-run the scraper."
+        )
+        self._search_session_ok = False
+        return False
+
     def scrape(self, driver: WebDriver, config: AppConfig) -> list[Lead]:
         leads: list[Lead] = []
+        self._search_session_ok = None  # reset per-scrape
 
         # Behance search requires authentication — skip entirely if we can't log in.
         # Adobe SSO blocks headless Chrome; run `python behance_login.py` once to
@@ -392,7 +420,7 @@ class BehanceScraper:
         try:
             driver.get("https://www.behance.net/")
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-            time.sleep(2)
+            time.sleep(2.5)
             logger.debug("Behance: homepage warm-up done.")
         except Exception:
             pass
@@ -428,13 +456,37 @@ class BehanceScraper:
         remaining = config.max_profiles_per_platform - len(existing)
         leads: list[Lead] = []
 
+        # If we already know search session is broken and re-login failed, skip
+        if self._search_session_ok is False:
+            return []
+
         # Strategy 1: user/profile search
         user_leads = self._search_users(driver, config, keyword, remaining)
         leads.extend(user_leads)
         remaining -= len(user_leads)
 
+        # If search returned 0 and session status is untested, this is the first
+        # failure — attempt re-login once and retry this keyword
+        if not user_leads and self._search_session_ok is None:
+            self._search_session_ok = False  # tentatively broken
+            if self._relogin(driver, config):
+                # Re-warm up the SPA after re-login
+                try:
+                    driver.get("https://www.behance.net/")
+                    WebDriverWait(driver, 12).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+                    )
+                    time.sleep(2)
+                except Exception:
+                    pass
+                user_leads = self._search_users(driver, config, keyword, remaining)
+                leads.extend(user_leads)
+                remaining -= len(user_leads)
+        elif user_leads and self._search_session_ok is None:
+            self._search_session_ok = True
+
         # Strategy 2: project search → extract authors (if still need more)
-        if remaining > 0 and len(leads) < 5:
+        if remaining > 0 and len(leads) < 5 and self._search_session_ok is not False:
             proj_leads = self._search_projects(driver, config, keyword, remaining)
             leads.extend(proj_leads)
 
